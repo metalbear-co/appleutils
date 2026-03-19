@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Import signing certificate
-        uses: apple-actions/import-codesign-certs@v3
+        uses: metalbear-co/import-codesign-certs@7f43a75d5120d645e67d471d678ccbff1d140cd6
         with:
           p12-file-base64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
           p12-password: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
@@ -61,7 +61,7 @@ jobs:
           echo "release_name=${release_name}" >> "${GITHUB_OUTPUT}"
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: metalbear-co/action-gh-release@ab50eebb6488051c6788d97fa95232267c6a4e23
         with:
           tag_name: ${{ inputs.tag }}
           name: ${{ steps.package.outputs.release_name }}
