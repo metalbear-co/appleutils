@@ -46,7 +46,7 @@ copy_release_entry() {
 main() {
   local line
   local relpath
-  local status
+  local sign_status
   local file_desc
   local copied_count=0
   local -A seen_paths=()
@@ -68,8 +68,8 @@ main() {
       [[ -n "${line}" ]] || continue
       [[ "${line}" != "relpath"$'\t'* ]] || continue
 
-      IFS=$'\t' read -r relpath _link_name _bundle_id status _detail <<< "${line}"
-      [[ "${status}" == "OK" ]] || continue
+      IFS=$'\t' read -r relpath _link_name _bundle_id sign_status _detail <<< "${line}"
+      [[ "${sign_status}" == "OK" ]] || continue
       [[ "${relpath}" =~ ${ALLOWED_RELATIVE_ROOTS_REGEX} ]] || continue
       [[ "${relpath}" != *$'\n'* ]] || continue
       [[ -z "${seen_paths[${relpath}]:-}" ]] || continue
