@@ -9,6 +9,7 @@ readonly BUILD_DIR="${ROOT_DIR}/build"
 readonly OUT_DIR="${ROOT_DIR}/out"
 readonly OUT_BIN_DIR="${OUT_DIR}/bin"
 readonly OUT_ROOT_DIR="${OUT_DIR}/root"
+readonly FAIL_LOG_DIR="${OUT_DIR}/fail-logs"
 readonly WORKTREE_DIR="${BUILD_DIR}/worktrees"
 readonly APPLE_OSS_BASE="https://github.com/apple-oss-distributions"
 readonly MANIFEST_REPO="${SRC_DIR}/distribution-macOS"
@@ -17,6 +18,7 @@ readonly BUILD_REPORT="${OUT_DIR}/build-report.tsv"
 readonly BINARY_MANIFEST="${OUT_DIR}/binaries.tsv"
 readonly TARGET_INVENTORY="${OUT_DIR}/targets.tsv"
 readonly EXCLUDED_TARGETS="${OUT_DIR}/excluded-targets.tsv"
+readonly MANUAL_EXCLUSIONS_FILE="${ROOT_DIR}/config/excluded-target-patterns.tsv"
 
 usage() {
   cat <<'EOF'
@@ -125,17 +127,17 @@ checkout_latest_revision() {
 
   if [[ ! -d "${dest_dir}/.git" ]]; then
     if [[ -n "${latest_tag}" ]]; then
-      git clone --depth 1 --branch "${latest_tag}" --single-branch "${repo_url}" "${dest_dir}"
+      git clone --depth 1 --branch "${latest_tag}" --single-branch "${repo_url}" "${dest_dir}" >/dev/null 2>&1
     else
-      git clone --depth 1 "${repo_url}" "${dest_dir}"
+      git clone --depth 1 "${repo_url}" "${dest_dir}" >/dev/null 2>&1
     fi
   fi
 
   if [[ -n "${latest_tag}" ]]; then
-    git -C "${dest_dir}" fetch --force --depth 1 origin "refs/tags/${latest_tag}:refs/tags/${latest_tag}"
+    git -C "${dest_dir}" fetch --force --depth 1 origin "refs/tags/${latest_tag}:refs/tags/${latest_tag}" >/dev/null 2>&1
     resolved_commit="$(git -C "${dest_dir}" rev-parse "${latest_tag}^{}")"
   else
-    git -C "${dest_dir}" fetch origin --force --depth 1
+    git -C "${dest_dir}" fetch origin --force --depth 1 >/dev/null 2>&1
     git -C "${dest_dir}" remote set-head origin -a >/dev/null 2>&1 || true
     resolved_commit="$(git -C "${dest_dir}" rev-parse origin/HEAD)"
   fi
@@ -158,8 +160,8 @@ bootstrap() {
 }
 
 reset_output_tree() {
-  rm -rf "${OUT_BIN_DIR}" "${OUT_ROOT_DIR}"
-  mkdir -p "${OUT_BIN_DIR}" "${OUT_ROOT_DIR}"
+  rm -rf "${OUT_BIN_DIR}" "${OUT_ROOT_DIR}" "${FAIL_LOG_DIR}"
+  mkdir -p "${OUT_BIN_DIR}" "${OUT_ROOT_DIR}" "${FAIL_LOG_DIR}"
 
   {
     print -- "repo\tref\tproject\ttarget\tstatus\tdetail"
@@ -306,6 +308,48 @@ target_extra_args() {
 
 sanitize_name() {
   print -- "$1" | tr '/ :' '---'
+}
+
+manual_target_exclusion_reason() {
+  local repo_name="$1"
+  local target_name="$2"
+  local excluded_repo
+  local target_pattern
+  local reason
+  local quoted_target_name="\"${target_name}\""
+
+  [[ -f "${MANUAL_EXCLUSIONS_FILE}" ]] || return 0
+
+  while IFS=$'\t' read -r excluded_repo target_pattern reason; do
+    [[ -n "${excluded_repo}" ]] || continue
+    [[ "${excluded_repo}" == "repo" ]] && continue
+
+    if [[ "${repo_name}" == "${excluded_repo}" ]] && { [[ "${target_name}" =~ ${target_pattern} ]] || [[ "${quoted_target_name}" =~ ${target_pattern} ]]; }; then
+      print -- "${reason}"
+      return 0
+    fi
+  done < "${MANUAL_EXCLUSIONS_FILE}"
+}
+
+summarize_build_log() {
+  local log_file="$1"
+  local summary
+
+  summary="$(
+    awk '
+      /fatal error: / { reason = $0 }
+      /error: no such module / { reason = $0 }
+      /error: Build input file cannot be found: / { reason = $0 }
+      /clang: error: linker command failed with exit code 1/ { reason = $0 }
+      /Command SetOwnerAndGroup failed with a nonzero exit code/ { reason = $0 }
+      /Operation not permitted/ { reason = $0 }
+      END { print reason }
+    ' "${log_file}"
+  )"
+
+  summary="${summary#*Z }"
+  [[ -n "${summary}" ]] || summary="xcodebuild install failed"
+  print -- "${summary}"
 }
 
 run_xcodebuild() {
@@ -523,6 +567,12 @@ discover_installable_targets_in_repo() {
       IFS=$'\t' read -r install_path skip_install product_name full_product_name <<< "${info}"
       if target_is_system_install "${install_path}" "${skip_install}"; then
         project_label="${project_file#$worktree/}"
+        private_reason="$(manual_target_exclusion_reason "${repo_name}" "${target_name}" || true)"
+        if [[ -n "${private_reason}" ]]; then
+          record_target_exclusion "${repo_name}" "${project_label}" "${target_name}" "${private_reason}"
+          continue
+        fi
+
         private_reason="$(target_private_dependency_reason "${project_file}" "${target_name}" "${worktree}" || true)"
         if [[ -n "${private_reason}" ]]; then
           record_target_exclusion "${repo_name}" "${project_label}" "${target_name}" "${private_reason}"
@@ -645,6 +695,9 @@ build_one_target() {
   local -a extra_args=()
   local build_key
   local dstroot
+  local log_dir
+  local log_file
+  local failure_detail
 
   extra_args_text="$(target_extra_args "${repo_name}" "${target_name}")"
   if [[ -n "${extra_args_text}" ]]; then
@@ -653,14 +706,22 @@ build_one_target() {
 
   build_key="${repo_name}-${target_name}"
   dstroot="${BUILD_DIR}/dst/$(sanitize_name "${build_key}")"
+  log_dir="${FAIL_LOG_DIR}/${repo_name}"
+  log_file="${log_dir}/$(sanitize_name "${target_name}").log"
+  mkdir -p "${log_dir}"
+  rm -f "${log_file}"
 
-  if run_xcodebuild "${build_key}" -project "${project_file}" -target "${target_name}" "${extra_args[@]}" install; then
+  if run_xcodebuild "${build_key}" -project "${project_file}" -target "${target_name}" "${extra_args[@]}" install >"${log_file}" 2>&1; then
+    rm -f "${log_file}"
     stage_installed_root "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"
     record_build_status "${repo_name}" "${project_label}" "${target_name}" "OK" "built and staged"
+    print -- "OK ${repo_name}:${target_name}"
     return 0
   fi
 
-  record_build_status "${repo_name}" "${project_label}" "${target_name}" "FAIL" "xcodebuild install failed"
+  failure_detail="$(summarize_build_log "${log_file}")"
+  record_build_status "${repo_name}" "${project_label}" "${target_name}" "FAIL" "${failure_detail} (${log_file#$ROOT_DIR/})"
+  print -u2 -- "FAIL ${repo_name}:${target_name} -> ${log_file#$ROOT_DIR/}"
   return 1
 }
 

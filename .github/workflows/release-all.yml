@@ -37,6 +37,18 @@ jobs:
           chmod +x scripts/build-apple-utils.sh scripts/sign-built-utils.sh scripts/package-release-licenses.sh
           make all
 
+      - name: Upload build logs and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ inputs.tag }}
+          if-no-files-found: ignore
+          path: |
+            out/build-report.tsv
+            out/excluded-targets.tsv
+            out/binaries.tsv
+            out/fail-logs
+
       - name: Sign built binaries
         run: |
           set -euo pipefail

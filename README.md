@@ -30,6 +30,7 @@ make list
 Artifacts land in:
 
 - `out/bin`
+- `out/fail-logs`
 - `out/root`
 - `out/release-package`
 - `out/targets.tsv`
@@ -38,8 +39,9 @@ Artifacts land in:
 - `out/binaries.tsv`
 
 `make inventory` resolves the manifest at latest tags and writes the full discovered installable target list to `out/targets.tsv`.
-Targets that are filtered out because they include private SDK/internal dependencies are written to `out/excluded-targets.tsv`.
-`make all` is best-effort across the manifest and records per-target success or failure in `out/build-report.tsv`.
+Targets that are filtered out because they include private SDK/internal dependencies, or match the checked-in CI exclusion seed in `config/excluded-target-patterns.tsv`, are written to `out/excluded-targets.tsv`.
+`make all` is best-effort across the manifest, prints one `OK` or `FAIL` line per attempted target, and records per-target success or failure in `out/build-report.tsv`.
+Failed target logs are written to `out/fail-logs`.
 `make bash` and `make sh` remain explicit shortcuts for the shell binaries you started with.
 
 ## GitHub Releases
@@ -51,6 +53,7 @@ One manual GitHub Actions workflow is included:
 The workflow:
 
 - runs `make all`
+- uploads `out/fail-logs` and the TSV reports as a workflow artifact even if the build step fails
 - signs each built Mach-O output with `Developer ID Application: METALBEAR TECH LTD (8W42TQ6PFA)`
 - uses bundle IDs in the form `com.metalbear.UTILNAME`
 - bundles this repository's `LICENSE` and `NOTICE.md`
