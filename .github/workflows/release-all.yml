@@ -1,0 +1,74 @@
+name: Release All Utilities
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create or update
+        required: true
+        type: string
+      release_name:
+        description: Optional GitHub release title
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release-all:
+    runs-on: macos-latest
+    env:
+      APPLICATION_IDENTITY: "Developer ID Application: METALBEAR TECH LTD (8W42TQ6PFA)"
+      BUNDLE_PREFIX: com.metalbear
+      ARCHIVE_PREFIX: apple-utils
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import signing certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+
+      - name: Build all public-SDK-safe binaries
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build-apple-utils.sh scripts/sign-built-utils.sh scripts/package-release-licenses.sh
+          make all
+
+      - name: Sign built binaries
+        run: |
+          set -euo pipefail
+          ./scripts/sign-built-utils.sh "${APPLICATION_IDENTITY}" "${BUNDLE_PREFIX}"
+
+      - name: Bundle license and notice files
+        run: |
+          set -euo pipefail
+          ./scripts/package-release-licenses.sh
+
+      - name: Package release tarball
+        id: package
+        run: |
+          set -euo pipefail
+          archive_name="${ARCHIVE_PREFIX}-${{ inputs.tag }}.tar.gz"
+          tar -C out/release-package -czf "${archive_name}" .
+          release_name="${{ inputs.release_name }}"
+          if [[ -z "${release_name}" ]]; then
+            release_name="apple utils ${{ inputs.tag }}"
+          fi
+          echo "archive_name=${archive_name}" >> "${GITHUB_OUTPUT}"
+          echo "release_name=${release_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ steps.package.outputs.release_name }}
+          files: |
+            ${{ steps.package.outputs.archive_name }}
+            out/binaries.tsv
+            out/build-report.tsv
+            out/excluded-targets.tsv
+            out/signed-binaries.tsv
+          generate_release_notes: true
