@@ -276,7 +276,7 @@ patch_bash_public_sdk_compat() {
 
   perl -0pi -e 's|#if defined\(__APPLE__\)\n#include <get_compat\.h>\n#include <TargetConditionals\.h>\n#include <stdint\.h>\n#include <System/sys/codesign\.h>\n#endif /\* __APPLE__ \*/|#if defined(__APPLE__)\n#include <get_compat.h>\n#include <TargetConditionals.h>\n#include <stdint.h>\n#if __has_include(<System/sys/codesign.h>)\n#include <System/sys/codesign.h>\n#define HAVE_APPLE_CODESIGN_H 1\n#endif\n#endif /* __APPLE__ */|s' "${shell_c}"
 
-  perl -0pi -e 's|#ifdef __APPLE__\nstatic int\nis_rootless_restricted_environment\(void\)\n\{\n\tuint32_t flags;\n\n\tif \(getenv\("APPLE_PKGKIT_ESCALATING_ROOT"\)\)\n\t\treturn 1;\n\tif \(csops\(0, CS_OPS_STATUS, &flags, sizeof\(flags\)\)\)\n\t\treturn -1;\n\treturn \(flags & CS_INSTALLER\) \? 1 : 0;\n\}\n#endif /\* __APPLE__ \*/|#ifdef __APPLE__\nstatic int\nis_rootless_restricted_environment(void)\n{\n#if !defined(HAVE_APPLE_CODESIGN_H)\n\tif (getenv("APPLE_PKGKIT_ESCALATING_ROOT"))\n\t\treturn 1;\n\treturn -1;\n#else\n\tuint32_t flags;\n\n\tif (getenv("APPLE_PKGKIT_ESCALATING_ROOT"))\n\t\treturn 1;\n\tif (csops(0, CS_OPS_STATUS, &flags, sizeof(flags)))\n\t\treturn -1;\n\treturn (flags & CS_INSTALLER) ? 1 : 0;\n#endif\n}\n#endif /* __APPLE__ */|s' "${shell_c}"
+  perl -0pi -e 's|#ifdef __APPLE__\nstatic int\nis_rootless_restricted_environment\(void\)\n\{\n\tuint32_t flags;\n\n\tif \(getenv\("APPLE_PKGKIT_ESCALATING_ROOT"\)\)\n\t\treturn 1;\n\tif \(csops\(0, CS_OPS_STATUS, &flags, sizeof\(flags\)\)\)\n\t\treturn -1;\n\treturn \(flags & CS_INSTALLER\) \? 1 : 0;\n\}\n#endif /\* __APPLE__ \*/|#ifdef __APPLE__\nstatic int\nis_rootless_restricted_environment(void)\n{\n\treturn 0;\n}\n#endif /* __APPLE__ */|s' "${shell_c}"
 }
 
 patch_repo_compat() {
