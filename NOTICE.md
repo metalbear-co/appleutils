@@ -6,7 +6,7 @@ public source releases.
 
 Repository wrapper code:
 
-- Copyright (c) 2026 Aviram Hassan
+- Copyright (c) 2026 MetalBear Tech LTD
 - Licensed under the MIT License in [LICENSE](LICENSE)
 
 Built utility binaries and upstream source components:
