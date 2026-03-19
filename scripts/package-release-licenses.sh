@@ -4,13 +4,12 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="${0:A:h}"
 readonly ROOT_DIR="${SCRIPT_DIR:h}"
-readonly SRC_DIR="${ROOT_DIR}/src"
 readonly OUT_DIR="${ROOT_DIR}/out"
 readonly OUT_ROOT_DIR="${OUT_DIR}/root"
 readonly BINARY_MANIFEST="${OUT_DIR}/binaries.tsv"
+readonly SIGNED_REPORT="${OUT_DIR}/signed-binaries.tsv"
 readonly PACKAGE_ROOT="${OUT_DIR}/release-package"
-readonly LICENSE_BUNDLE_DIR="${PACKAGE_ROOT}/LICENSES"
-readonly LICENSE_MANIFEST="${LICENSE_BUNDLE_DIR}/manifest.tsv"
+readonly ALLOWED_RELATIVE_ROOTS_REGEX='^(bin|sbin|usr/bin|usr/sbin)/'
 
 usage() {
   cat <<'EOF'
@@ -19,8 +18,9 @@ Usage:
 
 Notes:
   - Creates out/release-package from the current out/root tree.
-  - Bundles top-level repository licensing files and upstream license files
-    for repos that produced binaries in out/binaries.tsv.
+  - Only includes signed Mach-O binaries under /bin, /sbin, /usr/bin, and /usr/sbin.
+  - Keeps top-level LICENSE and NOTICE.md.
+  - Excludes docs, tests, plists, libexec helpers, and all other non-binary files.
 EOF
 }
 
@@ -33,71 +33,73 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
-copy_license_files_for_repo() {
-  local repo_name="$1"
-  local repo_dir="${SRC_DIR}/${repo_name}"
-  local dest_dir="${LICENSE_BUNDLE_DIR}/upstream/${repo_name}"
-  local file
-  local rel
-  local copied=0
+copy_release_entry() {
+  local relpath="$1"
+  local src_path="${OUT_ROOT_DIR}/${relpath}"
+  local dest_path="${PACKAGE_ROOT}/${relpath}"
 
-  [[ -d "${repo_dir}" ]] || return 0
-
-  while IFS= read -r -d '' file; do
-    rel="${file#${repo_dir}/}"
-    mkdir -p "${dest_dir}/${rel:h}"
-    cp "${file}" "${dest_dir}/${rel}"
-    print -- "${repo_name}\t${rel}" >> "${LICENSE_MANIFEST}"
-    copied=1
-  done < <(
-    find "${repo_dir}" -type f \
-      \( -iname 'APPLE_LICENSE' \
-      -o -iname 'LICENSE' \
-      -o -iname 'LICENSE.*' \
-      -o -iname 'COPYING' \
-      -o -iname 'COPYING.*' \
-      -o -iname 'NOTICE' \
-      -o -iname 'NOTICE.*' \) \
-      -print0
-  )
-
-  if (( copied == 0 )); then
-    print -- "${repo_name}\t(no matching license files found)" >> "${LICENSE_MANIFEST}"
-  fi
+  [[ -e "${src_path}" ]] || return 0
+  mkdir -p "${dest_path:h}"
+  cp -a "${src_path}" "${dest_path}"
 }
 
 main() {
   local line
-  local repo_name
-  local -A repos=()
+  local relpath
+  local status
+  local file_desc
+  local copied_count=0
+  local -A seen_paths=()
 
-  need_cmd rsync
+  need_cmd cp
+  need_cmd file
   [[ -d "${OUT_ROOT_DIR}" ]] || die "missing ${OUT_ROOT_DIR}; build a target first"
   [[ -f "${BINARY_MANIFEST}" ]] || die "missing ${BINARY_MANIFEST}; build a target first"
   [[ -f "${ROOT_DIR}/LICENSE" ]] || die "missing top-level LICENSE"
   [[ -f "${ROOT_DIR}/NOTICE.md" ]] || die "missing top-level NOTICE.md"
 
   rm -rf "${PACKAGE_ROOT}"
-  mkdir -p "${LICENSE_BUNDLE_DIR}/upstream"
-
-  rsync -a "${OUT_ROOT_DIR}/" "${PACKAGE_ROOT}/"
+  mkdir -p "${PACKAGE_ROOT}"
   cp "${ROOT_DIR}/LICENSE" "${PACKAGE_ROOT}/LICENSE"
   cp "${ROOT_DIR}/NOTICE.md" "${PACKAGE_ROOT}/NOTICE.md"
 
-  {
-    print -- "repo\trelpath"
-  } > "${LICENSE_MANIFEST}"
+  if [[ -f "${SIGNED_REPORT}" ]]; then
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      [[ "${line}" != "relpath"$'\t'* ]] || continue
 
-  while IFS= read -r line; do
-    [[ -n "${line}" ]] || continue
-    [[ "${line}" != "repo"$'\t'* ]] || continue
-    repo_name="${line%%$'\t'*}"
-    repos["${repo_name}"]=1
-  done < "${BINARY_MANIFEST}"
+      IFS=$'\t' read -r relpath _link_name _bundle_id status _detail <<< "${line}"
+      [[ "${status}" == "OK" ]] || continue
+      [[ "${relpath}" =~ ${ALLOWED_RELATIVE_ROOTS_REGEX} ]] || continue
+      [[ "${relpath}" != *$'\n'* ]] || continue
+      [[ -z "${seen_paths[${relpath}]:-}" ]] || continue
 
-  for repo_name in "${(@k)repos}"; do
-    copy_license_files_for_repo "${repo_name}"
-  done
+      seen_paths["${relpath}"]=1
+      copy_release_entry "${relpath}"
+      copied_count=$((copied_count + 1))
+    done < "${SIGNED_REPORT}"
+  else
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      [[ "${line}" != "repo"$'\t'* ]] || continue
+
+      IFS=$'\t' read -r _repo _ref _project _target relpath _link_name <<< "${line}"
+      [[ -n "${relpath}" ]] || continue
+      [[ "${relpath}" =~ ${ALLOWED_RELATIVE_ROOTS_REGEX} ]] || continue
+      [[ "${relpath}" != *$'\n'* ]] || continue
+      [[ -z "${seen_paths[${relpath}]:-}" ]] || continue
+      [[ -f "${OUT_ROOT_DIR}/${relpath}" ]] || continue
+
+      file_desc="$(file -Lb "${OUT_ROOT_DIR}/${relpath}")"
+      [[ "${file_desc}" == *Mach-O* ]] || continue
+
+      seen_paths["${relpath}"]=1
+      copy_release_entry "${relpath}"
+      copied_count=$((copied_count + 1))
+    done < "${BINARY_MANIFEST}"
+  fi
+
+  (( copied_count > 0 )) || die "no release binaries were packaged"
 }
 
 main "$@"

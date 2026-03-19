@@ -56,9 +56,11 @@ The workflow:
 - uploads `out/fail-logs` and the TSV reports as a workflow artifact even if the build step fails
 - signs each built Mach-O output with `Developer ID Application: METALBEAR TECH LTD (8W42TQ6PFA)`
 - uses bundle IDs in the form `com.metalbear.UTILNAME`
-- bundles this repository's `LICENSE` and `NOTICE.md`
-- bundles upstream license files for repos that produced shipped binaries
-- publishes a GitHub release asset as `apple-utils-<tag>.tar.gz` containing the packaged output tree
+- publishes a GitHub release asset as `apple-utils-<tag>.tar.gz` containing only signed binaries under `/bin`, `/sbin`, `/usr/bin`, and `/usr/sbin`, plus the top-level `LICENSE` and `NOTICE.md`
+
+Note:
+
+- `/usr/libexec` is another common system executable location on macOS, but it is intentionally excluded from the release tarball right now.
 
 Required repository secrets:
 
