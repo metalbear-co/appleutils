@@ -9,6 +9,7 @@ readonly OUT_ROOT_DIR="${OUT_DIR}/root"
 readonly BINARY_MANIFEST="${OUT_DIR}/binaries.tsv"
 readonly SIGNED_REPORT="${OUT_DIR}/signed-binaries.tsv"
 readonly DEFAULT_BUNDLE_PREFIX="com.metalbear"
+readonly ENABLE_HARDENED_RUNTIME="${ENABLE_HARDENED_RUNTIME:-0}"
 
 usage() {
   cat <<'EOF'
@@ -18,6 +19,8 @@ Usage:
 Notes:
   - Signs Mach-O binaries staged under out/root from the current build.
   - Bundle IDs are generated as <bundle-prefix>.<utilname>.
+  - Hardened Runtime is disabled by default so DYLD_INSERT_LIBRARIES keeps working.
+  - Set ENABLE_HARDENED_RUNTIME=1 to add the runtime option back.
   - Non-Mach-O files are skipped and recorded in out/signed-binaries.tsv.
 EOF
 }
@@ -42,6 +45,7 @@ main() {
   local bundle_id
   local file_desc
   local signed_count=0
+  local -a codesign_args
   local -A seen_paths=()
 
   [[ -n "${identity}" ]] || {
@@ -52,6 +56,15 @@ main() {
   need_cmd codesign
   need_cmd file
   [[ -f "${BINARY_MANIFEST}" ]] || die "missing ${BINARY_MANIFEST}; build a target first"
+
+  codesign_args=(
+    --force
+    --timestamp
+    --sign "${identity}"
+  )
+  if [[ "${ENABLE_HARDENED_RUNTIME}" == "1" ]]; then
+    codesign_args+=(--options runtime)
+  fi
 
   {
     print -- "relpath\tlink_name\tbundle_id\tstatus\tdetail"
@@ -82,10 +95,7 @@ main() {
     fi
 
     codesign \
-      --force \
-      --options runtime \
-      --timestamp \
-      --sign "${identity}" \
+      "${codesign_args[@]}" \
       --identifier "${bundle_id}" \
       "${target_path}"
 
