@@ -4,11 +4,15 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="${0:A:h}"
 readonly ROOT_DIR="${SCRIPT_DIR:h}"
+readonly SRC_DIR="${ROOT_DIR}/src"
 readonly OUT_DIR="${ROOT_DIR}/out"
 readonly OUT_ROOT_DIR="${OUT_DIR}/root"
 readonly BINARY_MANIFEST="${OUT_DIR}/binaries.tsv"
 readonly SIGNED_REPORT="${OUT_DIR}/signed-binaries.tsv"
 readonly PACKAGE_ROOT="${OUT_DIR}/release-package"
+readonly UPSTREAM_LICENSE_DIR="${PACKAGE_ROOT}/upstream-licenses"
+readonly UPSTREAM_LICENSE_MANIFEST="${PACKAGE_ROOT}/upstream-license-manifest.tsv"
+readonly LICENSE_SEARCH_MAX_DEPTH="${LICENSE_SEARCH_MAX_DEPTH:-4}"
 readonly ALLOWED_RELATIVE_ROOTS_REGEX='^(bin|sbin|usr/bin|usr/sbin)/'
 
 usage() {
@@ -20,6 +24,7 @@ Notes:
   - Creates out/release-package from the current out/root tree.
   - Only includes signed Mach-O binaries under /bin, /sbin, /usr/bin, and /usr/sbin.
   - Keeps top-level LICENSE and NOTICE.md.
+  - Bundles upstream license and notice files from the source repos that produced the shipped binaries.
   - Excludes docs, tests, plists, libexec helpers, and all other non-binary files.
 EOF
 }
@@ -27,6 +32,10 @@ EOF
 die() {
   print -u2 -- "error: $*"
   exit 1
+}
+
+warn() {
+  print -u2 -- "warning: $*"
 }
 
 need_cmd() {
@@ -43,6 +52,106 @@ copy_release_entry() {
   cp -a "${src_path}" "${dest_path}"
 }
 
+init_upstream_license_manifest() {
+  {
+    print -- "repo\tref\tstatus\tsource_path\tarchive_path\tsha256"
+  } > "${UPSTREAM_LICENSE_MANIFEST}"
+}
+
+find_repo_license_files() {
+  local repo_root="$1"
+
+  find "${repo_root}" -maxdepth "${LICENSE_SEARCH_MAX_DEPTH}" -type f \
+    \( \
+      -iname 'APPLE_LICENSE' -o \
+      -iname 'APPLE_LICENSE.*' -o \
+      -iname 'LICENSE' -o \
+      -iname 'LICENSE.*' -o \
+      -iname 'NOTICE' -o \
+      -iname 'NOTICE.*' -o \
+      -iname 'COPYING' -o \
+      -iname 'COPYING.*' -o \
+      -iname 'COPYRIGHT' -o \
+      -iname 'COPYRIGHT.*' -o \
+      -iname 'ACKNOWLEDGMENT*' -o \
+      -iname 'ACKNOWLEDGEMENTS*' -o \
+      -iname 'ACKNOWLEDGMENTS*' \
+    \) \
+    -print0 2>/dev/null
+}
+
+copy_upstream_licenses_for_repo() {
+  local repo_name="$1"
+  local repo_ref="$2"
+  local repo_root="${SRC_DIR}/${repo_name}"
+  local src_path
+  local relpath
+  local archive_relpath
+  local archive_path
+  local sha256
+  local found_any=0
+
+  [[ -d "${repo_root}" ]] || die "missing source checkout for ${repo_name} at ${repo_root}"
+
+  while IFS= read -r -d $'\0' src_path; do
+    [[ -f "${src_path}" ]] || continue
+
+    found_any=1
+    relpath="${src_path#${repo_root}/}"
+    archive_relpath="upstream-licenses/${repo_name}/${relpath}"
+    archive_path="${PACKAGE_ROOT}/${archive_relpath}"
+
+    mkdir -p "${archive_path:h}"
+    cp -a "${src_path}" "${archive_path}"
+    sha256="$(shasum -a 256 "${src_path}" | awk '{print $1}')"
+    print -- "${repo_name}\t${repo_ref}\tFOUND\t${relpath}\t${archive_relpath}\t${sha256}" >> "${UPSTREAM_LICENSE_MANIFEST}"
+  done < <(find_repo_license_files "${repo_root}")
+
+  if (( ! found_any )); then
+    warn "no upstream license or notice files found for ${repo_name}"
+    print -- "${repo_name}\t${repo_ref}\tMISSING\t-\t-\t-" >> "${UPSTREAM_LICENSE_MANIFEST}"
+  fi
+}
+
+copy_release_licenses() {
+  local line
+  local repo_name
+  local repo_ref
+  local relpath
+  local sign_status
+  local -A shipped_relpaths=()
+  local -A seen_repos=()
+
+  mkdir -p "${UPSTREAM_LICENSE_DIR}"
+  init_upstream_license_manifest
+
+  if [[ -f "${SIGNED_REPORT}" ]]; then
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      [[ "${line}" != "relpath"$'\t'* ]] || continue
+
+      IFS=$'\t' read -r relpath _link_name _bundle_id sign_status _detail <<< "${line}"
+      [[ "${sign_status}" == "OK" ]] || continue
+      shipped_relpaths["${relpath}"]=1
+    done < "${SIGNED_REPORT}"
+  fi
+
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    [[ "${line}" != "repo"$'\t'* ]] || continue
+
+    IFS=$'\t' read -r repo_name repo_ref _project _target relpath _link_name <<< "${line}"
+    [[ -n "${repo_name}" ]] || continue
+    if [[ -f "${SIGNED_REPORT}" ]] && [[ -z ${shipped_relpaths["$relpath"]-} ]]; then
+      continue
+    fi
+    [[ -n ${seen_repos["$repo_name"]-} ]] && continue
+
+    seen_repos["${repo_name}"]=1
+    copy_upstream_licenses_for_repo "${repo_name}" "${repo_ref}"
+  done < "${BINARY_MANIFEST}"
+}
+
 main() {
   local line
   local relpath
@@ -53,6 +162,9 @@ main() {
 
   need_cmd cp
   need_cmd file
+  need_cmd find
+  need_cmd shasum
+  need_cmd awk
   [[ -d "${OUT_ROOT_DIR}" ]] || die "missing ${OUT_ROOT_DIR}; build a target first"
   [[ -f "${BINARY_MANIFEST}" ]] || die "missing ${BINARY_MANIFEST}; build a target first"
   [[ -f "${ROOT_DIR}/LICENSE" ]] || die "missing top-level LICENSE"
@@ -62,6 +174,7 @@ main() {
   mkdir -p "${PACKAGE_ROOT}"
   cp "${ROOT_DIR}/LICENSE" "${PACKAGE_ROOT}/LICENSE"
   cp "${ROOT_DIR}/NOTICE.md" "${PACKAGE_ROOT}/NOTICE.md"
+  copy_release_licenses
 
   if [[ -f "${SIGNED_REPORT}" ]]; then
     while IFS= read -r line; do
@@ -72,7 +185,7 @@ main() {
       [[ "${sign_status}" == "OK" ]] || continue
       [[ "${relpath}" =~ ${ALLOWED_RELATIVE_ROOTS_REGEX} ]] || continue
       [[ "${relpath}" != *$'\n'* ]] || continue
-      [[ -z "${seen_paths[${relpath}]:-}" ]] || continue
+      [[ -n ${seen_paths["$relpath"]-} ]] && continue
 
       seen_paths["${relpath}"]=1
       copy_release_entry "${relpath}"
@@ -87,7 +200,7 @@ main() {
       [[ -n "${relpath}" ]] || continue
       [[ "${relpath}" =~ ${ALLOWED_RELATIVE_ROOTS_REGEX} ]] || continue
       [[ "${relpath}" != *$'\n'* ]] || continue
-      [[ -z "${seen_paths[${relpath}]:-}" ]] || continue
+      [[ -n ${seen_paths["$relpath"]-} ]] && continue
       [[ -f "${OUT_ROOT_DIR}/${relpath}" ]] || continue
 
       file_desc="$(file -Lb "${OUT_ROOT_DIR}/${relpath}")"

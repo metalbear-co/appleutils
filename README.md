@@ -57,7 +57,7 @@ The workflow:
 - signs each built Mach-O output with `Developer ID Application: METALBEAR TECH LTD (8W42TQ6PFA)`
 - signs without Hardened Runtime by default, so loader-based injection like `DYLD_INSERT_LIBRARIES` remains available
 - uses bundle IDs in the form `com.metalbear.UTILNAME`
-- publishes a GitHub release asset as `apple-utils-<tag>.tar.gz` containing only signed binaries under `/bin`, `/sbin`, `/usr/bin`, and `/usr/sbin`, plus the top-level `LICENSE` and `NOTICE.md`
+- publishes a GitHub release asset as `apple-utils-<tag>.tar.gz` containing only signed binaries under `/bin`, `/sbin`, `/usr/bin`, and `/usr/sbin`, plus the top-level `LICENSE`, `NOTICE.md`, `upstream-licenses/`, and `upstream-license-manifest.tsv`
 
 Note:
 
