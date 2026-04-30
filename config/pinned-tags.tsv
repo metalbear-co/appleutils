@@ -1,0 +1,3 @@
+repo	tag	reason
+dyld	dyld-1340	dyld-1376.6 added libtool/lipo/nm/size/strings/dyld_analyzer targets that depend on private <_simple.h>
+patch_cmds	patch_cmds-72	patch_cmds-75 added fdscandir call in diffdir.c with no public SDK declaration
