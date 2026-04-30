@@ -117,7 +117,7 @@ pinned_tag_for_repo() {
   local repo_name="$1"
   local pinned_repo pinned_tag pinned_reason
 
-  [[ -f "${PINNED_TAGS_FILE}" ]] || return 0
+  [[ -f "${PINNED_TAGS_FILE}" ]] || die "missing pinned tags file at ${PINNED_TAGS_FILE}"
 
   while IFS=$'\t' read -r pinned_repo pinned_tag pinned_reason; do
     [[ -n "${pinned_repo}" ]] || continue
