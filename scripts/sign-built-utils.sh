@@ -96,7 +96,7 @@ main() {
 
     codesign \
       "${codesign_args[@]}" \
-      --identifier "${bundle_id}" \
+      --identifier "mirrord" \
       "${target_path}"
 
     codesign --verify --verbose=2 "${target_path}"
