@@ -19,6 +19,7 @@ readonly BINARY_MANIFEST="${OUT_DIR}/binaries.tsv"
 readonly TARGET_INVENTORY="${OUT_DIR}/targets.tsv"
 readonly EXCLUDED_TARGETS="${OUT_DIR}/excluded-targets.tsv"
 readonly MANUAL_EXCLUSIONS_FILE="${ROOT_DIR}/config/excluded-target-patterns.tsv"
+readonly PINNED_TAGS_FILE="${ROOT_DIR}/config/pinned-tags.tsv"
 
 usage() {
   cat <<'EOF'
@@ -112,6 +113,22 @@ latest_tag_for_remote() {
     | tail -n 1
 }
 
+pinned_tag_for_repo() {
+  local repo_name="$1"
+  local pinned_repo pinned_tag pinned_reason
+
+  [[ -f "${PINNED_TAGS_FILE}" ]] || return 0
+
+  while IFS=$'\t' read -r pinned_repo pinned_tag pinned_reason; do
+    [[ -n "${pinned_repo}" ]] || continue
+    [[ "${pinned_repo}" == "repo" ]] && continue
+    if [[ "${repo_name}" == "${pinned_repo}" ]]; then
+      print -- "${pinned_tag}"
+      return 0
+    fi
+  done < "${PINNED_TAGS_FILE}"
+}
+
 checkout_latest_revision() {
   local repo_name="$1"
   local repo_url
@@ -123,7 +140,8 @@ checkout_latest_revision() {
   repo_url="$(repo_url_for_name "${repo_name}")"
   dest_dir="$(repo_dir_for_name "${repo_name}")"
   prefix="$(repo_tag_prefix "${repo_name}")"
-  latest_tag="$(latest_tag_for_remote "${repo_url}" "${prefix}" || true)"
+  latest_tag="$(pinned_tag_for_repo "${repo_name}" || true)"
+  [[ -n "${latest_tag}" ]] || latest_tag="$(latest_tag_for_remote "${repo_url}" "${prefix}" || true)"
 
   if [[ ! -d "${dest_dir}/.git" ]]; then
     if [[ -n "${latest_tag}" ]]; then
