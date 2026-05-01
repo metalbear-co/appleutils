@@ -22,7 +22,6 @@ diskdev_cmds	^(fsck_fskit|mount|mount_devfs|mount_fdesc|newfs_fskit|quotacheck|u
 doc_cmds	^(makewhatis)$	failed in GitHub Actions build log on 2026-03-19
 dtrace	^(dtrace|plockstat|usdtheadergen)$	failed in GitHub Actions build log on 2026-03-19
 dyld	^(dyld_usage|ld\-prime|update_dyld_shared_cache_tool)$	failed in GitHub Actions build log on 2026-03-19
-file	^(file)$	failed in GitHub Actions build log on 2026-03-19
 file_cmds	^(chmod|cp|dd|df|du|gzip|install|ipcs|ls|mtree|truncate)$	failed in GitHub Actions build log on 2026-03-19
 gpt	^(gpt)$	failed in GitHub Actions build log on 2026-03-19
 gssd	^(gssd)$	failed in GitHub Actions build log on 2026-03-19

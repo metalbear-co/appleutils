@@ -297,6 +297,26 @@ patch_bash_public_sdk_compat() {
   perl -0pi -e 's|#ifdef __APPLE__\nstatic int\nis_rootless_restricted_environment\(void\)\n\{\n\tuint32_t flags;\n\n\tif \(getenv\("APPLE_PKGKIT_ESCALATING_ROOT"\)\)\n\t\treturn 1;\n\tif \(csops\(0, CS_OPS_STATUS, &flags, sizeof\(flags\)\)\)\n\t\treturn -1;\n\treturn \(flags & CS_INSTALLER\) \? 1 : 0;\n\}\n#endif /\* __APPLE__ \*/|#ifdef __APPLE__\nstatic int\nis_rootless_restricted_environment(void)\n{\n\treturn 0;\n}\n#endif /* __APPLE__ */|s' "${shell_c}"
 }
 
+patch_file_public_sdk_compat() {
+  local file_root="$1"
+  local pbxproj="${file_root}/file.xcodeproj/project.pbxproj"
+  local magichost_sh="${file_root}/xcodescripts/build_magichost.sh"
+  local xcconfig="${file_root}/xcconfigs/common.xcconfig"
+
+  [[ -f "${pbxproj}" ]] || die "missing file.xcodeproj/project.pbxproj at ${pbxproj}"
+
+  perl -pi -e 's/SDKROOT = macosx\.internal/SDKROOT = macosx/g' "${pbxproj}"
+  perl -pi -e 's/SDKROOT = iphoneos\.internal/SDKROOT = iphoneos/g' "${pbxproj}"
+
+  [[ -f "${magichost_sh}" ]] && perl -pi -e 's/-sdk "macosx\.internal"/-sdk "macosx"/g' "${magichost_sh}"
+
+  local xz_include
+  xz_include="$(brew --prefix xz 2>/dev/null)/include"
+  if [[ -f "${xz_include}/lzma.h" ]]; then
+    perl -pi -e 's{(HEADER_SEARCH_PATHS\s*=\s*)(\$\(SRCROOT\))}{$1$2 '"${xz_include}"'}' "${xcconfig}"
+  fi
+}
+
 patch_repo_compat() {
   local repo_name="$1"
   local worktree="$2"
@@ -306,6 +326,9 @@ patch_repo_compat() {
   case "${repo_name}" in
     bash)
       patch_bash_public_sdk_compat "${worktree}"
+      ;;
+    file)
+      patch_file_public_sdk_compat "${worktree}"
       ;;
   esac
 }
