@@ -48,7 +48,7 @@ security_systemkeychain	^(systemkeychain)$	failed in GitHub Actions build log on
 shell_cmds	^(nohup|su|w)$	failed in GitHub Actions build log on 2026-03-19
 sudo	^(sudo|visudo)$	failed in GitHub Actions build log on 2026-03-19
 syslog	^(newsyslog|util)$	failed in GitHub Actions build log on 2026-03-19
-system_cmds	^(arch|atrun|chpass|fs_usage|gcore|latency|login|lskq|lsmp|memory_pressure|nvram|passwd|reboot|sc_usage|shutdown|taskpolicy|zprint)$	failed in GitHub Actions build log on 2026-03-19
+system_cmds	^(arch|atrun|chpass|fs_usage|gcore|latency|login|lskq|lsmp|memory_pressure|nvram|passwd|reboot|sc_usage|shutdown|taskpolicy|vm_stat|zprint)$	failed in GitHub Actions build log on 2026-03-19; vm_stat needs internal-SDK vm_statistics64 tag fields
 tcpdump	^(tcpdump|tcpdump_static)$	failed in GitHub Actions build log on 2026-03-19
 text_cmds	^(grep|md5|split|tail|wc)$	failed in GitHub Actions build log on 2026-03-19
 tidy	^(tidy)$	failed in GitHub Actions build log on 2026-03-19
