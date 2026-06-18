@@ -148,6 +148,13 @@ copy_release_licenses() {
     [[ -n ${seen_repos["$repo_name"]-} ]] && continue
 
     seen_repos["${repo_name}"]=1
+    if [[ "${repo_name}" == "local" ]]; then
+      # First-party binaries (e.g. the java stub). No upstream checkout exists;
+      # they are covered by the project's own top-level LICENSE/NOTICE.md, which
+      # are already bundled above.
+      print -- "${repo_name}\t${repo_ref}\tFIRST_PARTY\t-\t-\t-" >> "${UPSTREAM_LICENSE_MANIFEST}"
+      continue
+    fi
     copy_upstream_licenses_for_repo "${repo_name}" "${repo_ref}"
   done < "${BINARY_MANIFEST}"
 }
