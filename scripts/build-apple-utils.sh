@@ -726,6 +726,32 @@ stage_installed_root() {
   done
 }
 
+# sh installs to usr/bin/sh but the canonical system path is /bin/sh; mirror it so
+# the staged root provides both.
+mirror_sh_into_bin() {
+  local repo_name="$1"
+  local project_label="$2"
+  local target_name="$3"
+  local repo_dir
+  local repo_ref
+  local link_name
+
+  [[ "${repo_name}" == "shell_cmds" && "${target_name}" == "sh" ]] || return 0
+  [[ -f "${OUT_ROOT_DIR}/usr/bin/sh" ]] || return 0
+  [[ -e "${OUT_ROOT_DIR}/bin/sh" ]] && return 0
+
+  repo_dir="$(repo_dir_for_name "${repo_name}")"
+  repo_ref="$(current_repo_ref "${repo_dir}")"
+
+  mkdir -p "${OUT_ROOT_DIR}/bin"
+  cp -p "${OUT_ROOT_DIR}/usr/bin/sh" "${OUT_ROOT_DIR}/bin/sh"
+
+  link_name="$(choose_output_link_name "bin/sh")"
+  rm -f "${OUT_BIN_DIR}/${link_name}"
+  ln -s "../root/bin/sh" "${OUT_BIN_DIR}/${link_name}"
+  print -- "${repo_name}\t${repo_ref}\t${project_label}\t${target_name}\tbin/sh\t${link_name}" >> "${BINARY_MANIFEST}"
+}
+
 build_one_target() {
   local repo_name="$1"
   local worktree="$2"
@@ -755,6 +781,7 @@ build_one_target() {
   if run_xcodebuild "${build_key}" -project "${project_file}" -target "${target_name}" "${extra_args[@]}" install >"${log_file}" 2>&1; then
     rm -f "${log_file}"
     stage_installed_root "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"
+    mirror_sh_into_bin "${repo_name}" "${project_label}" "${target_name}"
     record_build_status "${repo_name}" "${project_label}" "${target_name}" "OK" "built and staged"
     print -- "OK ${repo_name}:${target_name}"
     return 0
