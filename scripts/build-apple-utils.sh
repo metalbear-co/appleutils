@@ -20,6 +20,7 @@ readonly TARGET_INVENTORY="${OUT_DIR}/targets.tsv"
 readonly EXCLUDED_TARGETS="${OUT_DIR}/excluded-targets.tsv"
 readonly MANUAL_EXCLUSIONS_FILE="${ROOT_DIR}/config/excluded-target-patterns.tsv"
 readonly PINNED_TAGS_FILE="${ROOT_DIR}/config/pinned-tags.tsv"
+readonly LOCAL_SRC_DIR="${ROOT_DIR}/local"
 
 usage() {
   cat <<'EOF'
@@ -31,13 +32,15 @@ Usage:
   scripts/build-apple-utils.sh build all
   scripts/build-apple-utils.sh build bash
   scripts/build-apple-utils.sh build sh
+  scripts/build-apple-utils.sh build java
   scripts/build-apple-utils.sh build <repo>
   scripts/build-apple-utils.sh build <repo>:<target>
 
 Notes:
   - Repos are checked out at their latest published tag when one matches <repo>-*.
   - If a repo has no matching tags, the wrapper falls back to the repo's default branch HEAD.
-  - "all" means: discover tool targets from Apple OSS repos and build the ones that install into system binary paths.
+  - "all" means: discover tool targets from Apple OSS repos and build the ones that install into system binary paths, plus locally-authored stubs (java).
+  - "java" builds a locally-authored /usr/bin/java locator stub from local/java/java.c (macOS's java is a closed-source stub; this reproduces it). It forwards to a JDK found via $JAVA_HOME or /usr/libexec/java_home.
   - Build results are recorded in out/build-report.tsv and out/binaries.tsv.
   - Inventory output is recorded in out/targets.tsv.
   - Filtered targets are recorded in out/excluded-targets.tsv.
@@ -164,7 +167,7 @@ checkout_latest_revision() {
 }
 
 current_repo_ref() {
-  git -C "$1" describe --tags --always
+  git -C "$1" describe --tags --always 2>/dev/null || print -- "local"
 }
 
 bootstrap() {
@@ -798,6 +801,38 @@ build_one_target() {
   return 1
 }
 
+# Build and stage a locally-authored /usr/bin/java locator stub. This is not an
+# Apple OSS target; macOS's /usr/bin/java is a closed-source stub, so we compile
+# our own equivalent from local/java/java.c and stage it like any other binary.
+build_java_shim() {
+  local src="${LOCAL_SRC_DIR}/java/java.c"
+  local dstroot
+  local log_dir
+  local log_file
+
+  [[ -f "${src}" ]] || die "missing java shim source at ${src}"
+
+  dstroot="${BUILD_DIR}/dst/$(sanitize_name "local-java")"
+  log_dir="${FAIL_LOG_DIR}/local"
+  log_file="${log_dir}/java.log"
+  rm -rf "${dstroot}"
+  mkdir -p "${dstroot}/usr/bin" "${log_dir}"
+  rm -f "${log_file}"
+
+  if xcrun clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Os -Wall -Wextra \
+      -o "${dstroot}/usr/bin/java" "${src}" >"${log_file}" 2>&1; then
+    rm -f "${log_file}"
+    stage_installed_root "local" "local/java" "java" "${dstroot}"
+    record_build_status "local" "local/java" "java" "OK" "built and staged"
+    print -- "OK local:java"
+    return 0
+  fi
+
+  record_build_status "local" "local/java" "java" "FAIL" "clang build failed (${log_file#$ROOT_DIR/})"
+  print -u2 -- "FAIL local:java -> ${log_file#$ROOT_DIR/}"
+  return 1
+}
+
 build_repo_targets() {
   local repo_name="$1"
   shift || true
@@ -865,6 +900,10 @@ build_all_targets() {
     fi
   done < <(manifest_repo_names)
 
+  if ! build_java_shim; then
+    failures=$((failures + 1))
+  fi
+
   return "${failures}"
 }
 
@@ -901,6 +940,11 @@ build_targets() {
         ;;
       sh)
         if ! build_repo_targets "shell_cmds" "sh"; then
+          failures=$((failures + 1))
+        fi
+        ;;
+      java)
+        if ! build_java_shim; then
           failures=$((failures + 1))
         fi
         ;;
