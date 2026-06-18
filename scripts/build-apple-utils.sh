@@ -439,7 +439,12 @@ manifest_repo_names() {
 
 project_files_for_repo() {
   local repo_root="$1"
-  find "${repo_root}" -type d -name '*.xcodeproj' | sort
+  local project_file
+
+  while IFS= read -r project_file; do
+    [[ -f "${project_file}/project.pbxproj" && -r "${project_file}/project.pbxproj" ]] || continue
+    print -- "${project_file}"
+  done < <(find "${repo_root}" -type d -name '*.xcodeproj' | sort)
 }
 
 tool_targets_for_project() {
