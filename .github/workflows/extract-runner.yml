@@ -1,0 +1,76 @@
+name: Extract utils from GitHub runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      directories:
+        description: Comma-separated list of directories to scan
+        required: true
+        type: string
+        default: /bin,/sbin,/usr/bin,/usr/sbin
+
+jobs:
+  extract:
+    runs-on: macos-latest
+    steps:
+      - name: Scan Apple-signed executables
+        shell: bash
+        env:
+          DIRECTORIES: ${{ inputs.directories }}
+        run: |
+          set -euo pipefail
+
+          trim() {
+            local value=$1
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
+          }
+
+          IFS=',' read -r -a raw_dirs <<< "$DIRECTORIES"
+          dirs=()
+          for raw_dir in "${raw_dirs[@]}"; do
+            dir="$(trim "$raw_dir")"
+            if [[ -n "$dir" && -d "$dir" ]]; then
+              dirs+=("$dir")
+            fi
+          done
+
+          if ((${#dirs[@]} == 0)); then
+            echo "No valid directories to scan."
+            exit 1
+          fi
+
+          while IFS= read -r -d '' path; do
+            [[ -x "$path" ]] || continue
+
+            codesign_output="$(codesign -dvv "$path" 2>&1 || true)"
+            leaf_authority="$(awk -F= '/^Authority=/{print $2; exit}' <<<"$codesign_output")"
+            case "$leaf_authority" in
+              "Software Signing"|Apple*)
+                ;;
+              *)
+                continue
+                ;;
+            esac
+
+            echo "PATH: $path"
+            printf '%s\n' "$codesign_output"
+
+            archs_output="$(lipo -archs "$path" 2>&1 || true)"
+            printf '%s\n' "$archs_output"
+
+            has_arm64=0
+            has_arm64e=0
+            archs="${archs_output#*: }"
+            for arch in $archs; do
+              [[ "$arch" == "arm64" ]] && has_arm64=1
+              [[ "$arch" == "arm64e" ]] && has_arm64e=1
+            done
+
+            if ((has_arm64e && !has_arm64)); then
+              printf '\033[31mWARNING\033[0m\n'
+            fi
+
+            echo
+          done < <(find -H "${dirs[@]}" \( -type f -o -type l \) -print0 2>/dev/null)
