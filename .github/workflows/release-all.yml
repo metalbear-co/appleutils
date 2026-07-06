@@ -25,6 +25,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Select Xcode version
+        run: |
+          set -euo pipefail
+          xcode_app="$(ls -1d /Applications/Xcode*.app | sort -V | tail -n 1)"
+          if [[ -z "${xcode_app}" ]]; then
+            echo "No Xcode app found in /Applications"
+            exit 1
+          fi
+          sudo xcode-select -s "${xcode_app}/Contents/Developer"
+          xcode-select -p
+          xcodebuild -version
+
       - name: Import signing certificate
         uses: metalbear-co/import-codesign-certs@7f43a75d5120d645e67d471d678ccbff1d140cd6
         with:
