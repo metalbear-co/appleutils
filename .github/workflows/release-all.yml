@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to create or update
-        required: true
+        description: Optional release tag. If empty, upload build bundle as run artifact only.
+        required: false
+        default: ""
         type: string
       release_name:
-        description: Optional GitHub release title
+        description: Optional GitHub release title (used only when tag is provided)
         required: false
         type: string
 
@@ -61,7 +62,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs-${{ inputs.tag }}
+          name: build-logs
           if-no-files-found: ignore
           path: |
             out/build-report.tsv
@@ -83,16 +84,29 @@ jobs:
         id: package
         run: |
           set -euo pipefail
-          archive_name="${ARCHIVE_PREFIX}-${{ inputs.tag }}.tar.gz"
+          archive_suffix="${{ inputs.tag }}"
+          if [[ -z "${archive_suffix}" ]]; then
+            archive_suffix="run-${GITHUB_RUN_ID}"
+          fi
+          archive_name="${ARCHIVE_PREFIX}-${archive_suffix}.tar.gz"
           tar -C out/release-package -czf "${archive_name}" .
-          release_name="${{ inputs.release_name }}"
-          if [[ -z "${release_name}" ]]; then
-            release_name="apple utils ${{ inputs.tag }}"
+          if [[ -n "${{ inputs.tag }}" ]]; then
+            release_name="${{ inputs.release_name }}"
+            if [[ -z "${release_name}" ]]; then
+              release_name="apple utils ${{ inputs.tag }}"
+            fi
+            echo "release_name=${release_name}" >> "${GITHUB_OUTPUT}"
           fi
           echo "archive_name=${archive_name}" >> "${GITHUB_OUTPUT}"
-          echo "release_name=${release_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle
+          path: ${{ steps.package.outputs.archive_name }}
 
       - name: Publish GitHub release
+        if: ${{ inputs.tag != '' }}
         uses: metalbear-co/action-gh-release@ab50eebb6488051c6788d97fa95232267c6a4e23
         with:
           tag_name: ${{ inputs.tag }}
