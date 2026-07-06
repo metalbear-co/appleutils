@@ -343,7 +343,7 @@ target_extra_args() {
 
   case "${repo_name}:${target_name}" in
     shell_cmds:sh)
-      args+=(SH_INSTALL_PATH=/bin SH_PRODUCT_NAME=sh SH_MAN_PREFIX=/usr)
+      args+=(INSTALL_PATH=/bin PRODUCT_NAME=sh EXECUTABLE_NAME=sh)
       ;;
   esac
 
@@ -775,19 +775,23 @@ ensure_sh_staged() {
   local repo_dir
   local repo_ref
   local src_relpath=""
-  local dst_relpath="usr/bin/sh"
+  local dst_relpath="bin/sh"
   local link_name
 
   [[ "${repo_name}" == "shell_cmds" && "${target_name}" == "sh" ]] || return 0
 
-  if [[ -f "${OUT_ROOT_DIR}/usr/bin/sh" || -f "${OUT_ROOT_DIR}/bin/sh" ]]; then
+  if [[ -f "${OUT_ROOT_DIR}/bin/sh" || -f "${OUT_ROOT_DIR}/usr/bin/sh" ]]; then
     return 0
   fi
 
-  if [[ -f "${installed_root}/usr/bin/sh" ]]; then
-    src_relpath="usr/bin/sh"
-  elif [[ -f "${installed_root}/bin/sh" ]]; then
+  if [[ -f "${installed_root}/bin/sh" ]]; then
     src_relpath="bin/sh"
+  elif [[ -f "${installed_root}/usr/bin/sh" ]]; then
+    src_relpath="usr/bin/sh"
+  elif [[ -f "${installed_root}/bin/ash" ]]; then
+    src_relpath="bin/ash"
+  elif [[ -f "${installed_root}/usr/bin/ash" ]]; then
+    src_relpath="usr/bin/ash"
   else
     return 1
   fi
@@ -795,7 +799,7 @@ ensure_sh_staged() {
   repo_dir="$(repo_dir_for_name "${repo_name}")"
   repo_ref="$(current_repo_ref "${repo_dir}")"
 
-  mkdir -p "${OUT_ROOT_DIR}/usr/bin"
+  mkdir -p "${OUT_ROOT_DIR}/bin"
   cp -p "${installed_root}/${src_relpath}" "${OUT_ROOT_DIR}/${dst_relpath}"
 
   link_name="$(choose_output_link_name "${dst_relpath}")"
