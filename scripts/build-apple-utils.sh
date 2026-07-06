@@ -772,11 +772,14 @@ ensure_sh_staged() {
   local project_label="$2"
   local target_name="$3"
   local installed_root="$4"
+  local built_root="${5:-}"
   local repo_dir
   local repo_ref
-  local src_relpath=""
+  local src_path=""
   local dst_relpath="bin/sh"
   local link_name
+  local candidate
+  local file_desc
 
   [[ "${repo_name}" == "shell_cmds" && "${target_name}" == "sh" ]] || return 0
 
@@ -785,14 +788,36 @@ ensure_sh_staged() {
   fi
 
   if [[ -f "${installed_root}/bin/sh" ]]; then
-    src_relpath="bin/sh"
+    src_path="${installed_root}/bin/sh"
   elif [[ -f "${installed_root}/usr/bin/sh" ]]; then
-    src_relpath="usr/bin/sh"
+    src_path="${installed_root}/usr/bin/sh"
   elif [[ -f "${installed_root}/bin/ash" ]]; then
-    src_relpath="bin/ash"
+    src_path="${installed_root}/bin/ash"
   elif [[ -f "${installed_root}/usr/bin/ash" ]]; then
-    src_relpath="usr/bin/ash"
-  else
+    src_path="${installed_root}/usr/bin/ash"
+  fi
+
+  if [[ -z "${src_path}" ]]; then
+    while IFS= read -r -d '' candidate; do
+      [[ -n "${candidate}" && -f "${candidate}" ]] || continue
+      file_desc="$(file -Lb "${candidate}" 2>/dev/null || true)"
+      [[ "${file_desc}" == *Mach-O* ]] || continue
+      src_path="${candidate}"
+      break
+    done < <(find "${installed_root}" -type f \( -name sh -o -name ash \) -print0 2>/dev/null)
+  fi
+
+  if [[ -z "${src_path}" && -d "${built_root}" ]]; then
+    while IFS= read -r -d '' candidate; do
+      [[ -n "${candidate}" && -f "${candidate}" ]] || continue
+      file_desc="$(file -Lb "${candidate}" 2>/dev/null || true)"
+      [[ "${file_desc}" == *Mach-O* ]] || continue
+      src_path="${candidate}"
+      break
+    done < <(find "${built_root}" -type f \( -name sh -o -name ash \) -print0 2>/dev/null)
+  fi
+
+  if [[ -z "${src_path}" ]]; then
     return 1
   fi
 
@@ -800,7 +825,7 @@ ensure_sh_staged() {
   repo_ref="$(current_repo_ref "${repo_dir}")"
 
   mkdir -p "${OUT_ROOT_DIR}/bin"
-  cp -p "${installed_root}/${src_relpath}" "${OUT_ROOT_DIR}/${dst_relpath}"
+  cp -p "${src_path}" "${OUT_ROOT_DIR}/${dst_relpath}"
 
   link_name="$(choose_output_link_name "${dst_relpath}")"
   rm -f "${OUT_BIN_DIR}/${link_name}"
@@ -820,6 +845,7 @@ build_one_target() {
   local -a extra_args=()
   local build_key
   local dstroot
+  local symroot
   local log_dir
   local log_file
   local failure_detail
@@ -831,6 +857,7 @@ build_one_target() {
 
   build_key="${repo_name}-${target_name}"
   dstroot="${BUILD_DIR}/dst/$(sanitize_name "${build_key}")"
+  symroot="${BUILD_DIR}/sym/$(sanitize_name "${build_key}")"
   log_dir="${FAIL_LOG_DIR}/${repo_name}"
   log_file="${log_dir}/$(sanitize_name "${target_name}").log"
   mkdir -p "${log_dir}"
@@ -840,7 +867,7 @@ build_one_target() {
     rm -f "${log_file}"
     stage_installed_root "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"
     mirror_sh_into_bin "${repo_name}" "${project_label}" "${target_name}"
-    if ! ensure_sh_staged "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"; then
+    if ! ensure_sh_staged "${repo_name}" "${project_label}" "${target_name}" "${dstroot}" "${symroot}"; then
       record_build_status "${repo_name}" "${project_label}" "${target_name}" "FAIL" "target built but no sh binary staged"
       print -u2 -- "FAIL ${repo_name}:${target_name} -> sh binary missing from install root"
       return 1
