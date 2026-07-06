@@ -604,6 +604,7 @@ discover_installable_targets_in_repo() {
   local full_product_name
   local private_reason
   local project_label
+  local force_include=0
 
   while IFS= read -r project_file; do
     while IFS= read -r target_name; do
@@ -616,14 +617,20 @@ discover_installable_targets_in_repo() {
       IFS=$'\t' read -r install_path skip_install product_name full_product_name <<< "${info}"
       if target_is_system_install "${install_path}" "${skip_install}"; then
         project_label="${project_file#$worktree/}"
+        force_include=0
+        if [[ "${repo_name}:${target_name}" == "shell_cmds:sh" ]]; then
+          # Keep /bin/sh in scope even if heuristic private-header scanning is noisy.
+          force_include=1
+        fi
+
         private_reason="$(manual_target_exclusion_reason "${repo_name}" "${target_name}" || true)"
-        if [[ -n "${private_reason}" ]]; then
+        if (( ! force_include )) && [[ -n "${private_reason}" ]]; then
           record_target_exclusion "${repo_name}" "${project_label}" "${target_name}" "${private_reason}"
           continue
         fi
 
         private_reason="$(target_private_dependency_reason "${project_file}" "${target_name}" "${worktree}" || true)"
-        if [[ -n "${private_reason}" ]]; then
+        if (( ! force_include )) && [[ -n "${private_reason}" ]]; then
           record_target_exclusion "${repo_name}" "${project_label}" "${target_name}" "${private_reason}"
           continue
         fi
@@ -760,6 +767,45 @@ mirror_sh_into_bin() {
   print -- "${repo_name}\t${repo_ref}\t${project_label}\t${target_name}\tbin/sh\t${link_name}" >> "${BINARY_MANIFEST}"
 }
 
+ensure_sh_staged() {
+  local repo_name="$1"
+  local project_label="$2"
+  local target_name="$3"
+  local installed_root="$4"
+  local repo_dir
+  local repo_ref
+  local src_relpath=""
+  local dst_relpath="usr/bin/sh"
+  local link_name
+
+  [[ "${repo_name}" == "shell_cmds" && "${target_name}" == "sh" ]] || return 0
+
+  if [[ -f "${OUT_ROOT_DIR}/usr/bin/sh" || -f "${OUT_ROOT_DIR}/bin/sh" ]]; then
+    return 0
+  fi
+
+  if [[ -f "${installed_root}/usr/bin/sh" ]]; then
+    src_relpath="usr/bin/sh"
+  elif [[ -f "${installed_root}/bin/sh" ]]; then
+    src_relpath="bin/sh"
+  else
+    return 1
+  fi
+
+  repo_dir="$(repo_dir_for_name "${repo_name}")"
+  repo_ref="$(current_repo_ref "${repo_dir}")"
+
+  mkdir -p "${OUT_ROOT_DIR}/usr/bin"
+  cp -p "${installed_root}/${src_relpath}" "${OUT_ROOT_DIR}/${dst_relpath}"
+
+  link_name="$(choose_output_link_name "${dst_relpath}")"
+  rm -f "${OUT_BIN_DIR}/${link_name}"
+  ln -s "../root/${dst_relpath}" "${OUT_BIN_DIR}/${link_name}"
+  print -- "${repo_name}\t${repo_ref}\t${project_label}\t${target_name}\t${dst_relpath}\t${link_name}" >> "${BINARY_MANIFEST}"
+
+  mirror_sh_into_bin "${repo_name}" "${project_label}" "${target_name}"
+}
+
 build_one_target() {
   local repo_name="$1"
   local worktree="$2"
@@ -790,6 +836,11 @@ build_one_target() {
     rm -f "${log_file}"
     stage_installed_root "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"
     mirror_sh_into_bin "${repo_name}" "${project_label}" "${target_name}"
+    if ! ensure_sh_staged "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"; then
+      record_build_status "${repo_name}" "${project_label}" "${target_name}" "FAIL" "target built but no sh binary staged"
+      print -u2 -- "FAIL ${repo_name}:${target_name} -> sh binary missing from install root"
+      return 1
+    fi
     record_build_status "${repo_name}" "${project_label}" "${target_name}" "OK" "built and staged"
     print -- "OK ${repo_name}:${target_name}"
     return 0
