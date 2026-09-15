@@ -21,6 +21,7 @@ readonly EXCLUDED_TARGETS="${OUT_DIR}/excluded-targets.tsv"
 readonly MANUAL_EXCLUSIONS_FILE="${ROOT_DIR}/config/excluded-target-patterns.tsv"
 readonly PINNED_TAGS_FILE="${ROOT_DIR}/config/pinned-tags.tsv"
 readonly LOCAL_SRC_DIR="${ROOT_DIR}/local"
+readonly -a LOCAL_SHIMS=(java make)
 
 usage() {
   cat <<'EOF'
@@ -33,14 +34,16 @@ Usage:
   scripts/build-apple-utils.sh build bash
   scripts/build-apple-utils.sh build sh
   scripts/build-apple-utils.sh build java
+  scripts/build-apple-utils.sh build make
   scripts/build-apple-utils.sh build <repo>
   scripts/build-apple-utils.sh build <repo>:<target>
 
 Notes:
   - Repos are checked out at their latest published tag when one matches <repo>-*.
   - If a repo has no matching tags, the wrapper falls back to the repo's default branch HEAD.
-  - "all" means: discover tool targets from Apple OSS repos and build the ones that install into system binary paths, plus locally-authored stubs (java).
+  - "all" means: discover tool targets from Apple OSS repos and build the ones that install into system binary paths, plus locally-authored stubs (java, make).
   - "java" builds a locally-authored /usr/bin/java locator stub from local/java/java.c (macOS's java is a closed-source stub; this reproduces it). It forwards to a JDK found via $JAVA_HOME or /usr/libexec/java_home.
+  - "make" builds a locally-authored /usr/bin/make shim from local/make/make.c (macOS's make is a closed-source xcode-select tool shim; this reproduces it). It forwards to make in the active developer directory (DEVELOPER_DIR, xcode-select setting, Xcode.app, then CommandLineTools).
   - Build results are recorded in out/build-report.tsv and out/binaries.tsv.
   - Inventory output is recorded in out/targets.tsv.
   - Filtered targets are recorded in out/excluded-targets.tsv.
@@ -801,35 +804,37 @@ build_one_target() {
   return 1
 }
 
-# Build and stage a locally-authored /usr/bin/java locator stub. This is not an
-# Apple OSS target; macOS's /usr/bin/java is a closed-source stub, so we compile
-# our own equivalent from local/java/java.c and stage it like any other binary.
-build_java_shim() {
-  local src="${LOCAL_SRC_DIR}/java/java.c"
+# Build and stage a locally-authored /usr/bin/<name> stub from local/<name>/<name>.c.
+# These are not Apple OSS targets; macOS ships closed-source launchers for them
+# (java's JDK locator, make's xcode-select tool shim), so we compile our own
+# equivalents and stage them like any other binary.
+build_local_shim() {
+  local name="$1"
+  local src="${LOCAL_SRC_DIR}/${name}/${name}.c"
   local dstroot
   local log_dir
   local log_file
 
-  [[ -f "${src}" ]] || die "missing java shim source at ${src}"
+  [[ -f "${src}" ]] || die "missing ${name} shim source at ${src}"
 
-  dstroot="${BUILD_DIR}/dst/$(sanitize_name "local-java")"
+  dstroot="${BUILD_DIR}/dst/$(sanitize_name "local-${name}")"
   log_dir="${FAIL_LOG_DIR}/local"
-  log_file="${log_dir}/java.log"
+  log_file="${log_dir}/${name}.log"
   rm -rf "${dstroot}"
   mkdir -p "${dstroot}/usr/bin" "${log_dir}"
   rm -f "${log_file}"
 
   if xcrun clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Os -Wall -Wextra \
-      -o "${dstroot}/usr/bin/java" "${src}" >"${log_file}" 2>&1; then
+      -o "${dstroot}/usr/bin/${name}" "${src}" >"${log_file}" 2>&1; then
     rm -f "${log_file}"
-    stage_installed_root "local" "local/java" "java" "${dstroot}"
-    record_build_status "local" "local/java" "java" "OK" "built and staged"
-    print -- "OK local:java"
+    stage_installed_root "local" "local/${name}" "${name}" "${dstroot}"
+    record_build_status "local" "local/${name}" "${name}" "OK" "built and staged"
+    print -- "OK local:${name}"
     return 0
   fi
 
-  record_build_status "local" "local/java" "java" "FAIL" "clang build failed (${log_file#$ROOT_DIR/})"
-  print -u2 -- "FAIL local:java -> ${log_file#$ROOT_DIR/}"
+  record_build_status "local" "local/${name}" "${name}" "FAIL" "clang build failed (${log_file#$ROOT_DIR/})"
+  print -u2 -- "FAIL local:${name} -> ${log_file#$ROOT_DIR/}"
   return 1
 }
 
@@ -900,9 +905,12 @@ build_all_targets() {
     fi
   done < <(manifest_repo_names)
 
-  if ! build_java_shim; then
-    failures=$((failures + 1))
-  fi
+  local shim
+  for shim in "${LOCAL_SHIMS[@]}"; do
+    if ! build_local_shim "${shim}"; then
+      failures=$((failures + 1))
+    fi
+  done
 
   return "${failures}"
 }
@@ -943,8 +951,8 @@ build_targets() {
           failures=$((failures + 1))
         fi
         ;;
-      java)
-        if ! build_java_shim; then
+      java|make)
+        if ! build_local_shim "${spec}"; then
           failures=$((failures + 1))
         fi
         ;;
