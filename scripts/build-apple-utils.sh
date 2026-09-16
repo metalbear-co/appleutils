@@ -21,6 +21,7 @@ readonly EXCLUDED_TARGETS="${OUT_DIR}/excluded-targets.tsv"
 readonly MANUAL_EXCLUSIONS_FILE="${ROOT_DIR}/config/excluded-target-patterns.tsv"
 readonly PINNED_TAGS_FILE="${ROOT_DIR}/config/pinned-tags.tsv"
 readonly LOCAL_SRC_DIR="${ROOT_DIR}/local"
+readonly XCSELECT_TOOLS_FILE="${ROOT_DIR}/config/xcselect-tools.txt"
 
 usage() {
   cat <<'EOF'
@@ -33,14 +34,16 @@ Usage:
   scripts/build-apple-utils.sh build bash
   scripts/build-apple-utils.sh build sh
   scripts/build-apple-utils.sh build java
+  scripts/build-apple-utils.sh build xcrun
   scripts/build-apple-utils.sh build <repo>
   scripts/build-apple-utils.sh build <repo>:<target>
 
 Notes:
   - Repos are checked out at their latest published tag when one matches <repo>-*.
   - If a repo has no matching tags, the wrapper falls back to the repo's default branch HEAD.
-  - "all" means: discover tool targets from Apple OSS repos and build the ones that install into system binary paths, plus locally-authored stubs (java).
+  - "all" means: discover tool targets from Apple OSS repos and build the ones that install into system binary paths, plus locally-authored stubs (java, xcrun).
   - "java" builds a locally-authored /usr/bin/java locator stub from local/java/java.c (macOS's java is a closed-source stub; this reproduces it). It forwards to a JDK found via $JAVA_HOME or /usr/libexec/java_home.
+  - "xcrun" builds a locally-authored xcode-select launcher from local/xcrun/xcrun.c and stages it under every name in config/xcselect-tools.txt (xcrun, make, git, clang, ...). macOS ships those as x86_64/arm64e-only launchers; this one has a plain arm64 slice and calls the same libxcselect entry point.
   - Build results are recorded in out/build-report.tsv and out/binaries.tsv.
   - Inventory output is recorded in out/targets.tsv.
   - Filtered targets are recorded in out/excluded-targets.tsv.
@@ -833,6 +836,50 @@ build_java_shim() {
   return 1
 }
 
+# Build a locally-authored xcode-select launcher and stage it under every tool
+# name in config/xcselect-tools.txt. macOS ships these /usr/bin launchers with
+# only x86_64 and arm64e slices; the arm64e slice can't be used without SIP
+# restrictions and the x86_64 one fails under Rosetta whenever the active
+# developer directory only has arm64 libraries (e.g. CommandLineTools'
+# libxcrun.dylib). Each name is a full copy rather than a symlink because
+# signing and packaging only pick up regular Mach-O files.
+build_xcrun_shim() {
+  local src="${LOCAL_SRC_DIR}/xcrun/xcrun.c"
+  local dstroot
+  local log_dir
+  local log_file
+  local tool
+
+  [[ -f "${src}" ]] || die "missing xcrun shim source at ${src}"
+  [[ -f "${XCSELECT_TOOLS_FILE}" ]] || die "missing xcselect tool list at ${XCSELECT_TOOLS_FILE}"
+
+  dstroot="${BUILD_DIR}/dst/$(sanitize_name "local-xcrun")"
+  log_dir="${FAIL_LOG_DIR}/local"
+  log_file="${log_dir}/xcrun.log"
+  rm -rf "${dstroot}"
+  mkdir -p "${dstroot}/usr/bin" "${log_dir}"
+  rm -f "${log_file}"
+
+  if ! xcrun clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -Os -Wall -Wextra \
+      -o "${dstroot}/xcrun" "${src}" -lxcselect >"${log_file}" 2>&1; then
+    record_build_status "local" "local/xcrun" "xcrun" "FAIL" "clang build failed (${log_file#$ROOT_DIR/})"
+    print -u2 -- "FAIL local:xcrun -> ${log_file#$ROOT_DIR/}"
+    return 1
+  fi
+  rm -f "${log_file}"
+
+  while IFS= read -r tool; do
+    [[ -n "${tool}" && "${tool}" != \#* ]] || continue
+    cp -p "${dstroot}/xcrun" "${dstroot}/usr/bin/${tool}"
+  done < "${XCSELECT_TOOLS_FILE}"
+  rm -f "${dstroot}/xcrun"
+
+  stage_installed_root "local" "local/xcrun" "xcrun" "${dstroot}"
+  record_build_status "local" "local/xcrun" "xcrun" "OK" "built and staged"
+  print -- "OK local:xcrun"
+  return 0
+}
+
 build_repo_targets() {
   local repo_name="$1"
   shift || true
@@ -904,6 +951,10 @@ build_all_targets() {
     failures=$((failures + 1))
   fi
 
+  if ! build_xcrun_shim; then
+    failures=$((failures + 1))
+  fi
+
   return "${failures}"
 }
 
@@ -945,6 +996,11 @@ build_targets() {
         ;;
       java)
         if ! build_java_shim; then
+          failures=$((failures + 1))
+        fi
+        ;;
+      xcrun)
+        if ! build_xcrun_shim; then
           failures=$((failures + 1))
         fi
         ;;
