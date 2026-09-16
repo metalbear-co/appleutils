@@ -24,6 +24,7 @@ make inventory
 make all
 make bash
 make sh
+make xcrun
 make list
 ```
 
