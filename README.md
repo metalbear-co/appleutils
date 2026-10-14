@@ -15,6 +15,7 @@ Direct shortcuts:
 
 - `bash`: Apple-shipped, GPLv2, built from the latest `bash-*` tag
 - `sh`: Apple-shipped, but BSD-derived and built from the latest `shell_cmds-*` tag
+- `zsh`: Apple-shipped, MIT-style licence, built from the latest `zsh-*` tag with configure/make (no Xcode project) and modules linked statically, since the system's `/usr/lib/zsh` modules are `arm64e`-only on Apple silicon; `zsh/pcre` is not included
 
 ## Usage
 
@@ -24,6 +25,7 @@ make inventory
 make all
 make bash
 make sh
+make zsh
 make xcrun
 make list
 ```
@@ -43,7 +45,7 @@ Artifacts land in:
 Targets that are filtered out because they include private SDK/internal dependencies, or match the checked-in CI exclusion seed in `config/excluded-target-patterns.tsv`, are written to `out/excluded-targets.tsv`.
 `make all` is best-effort across the manifest, prints one `OK` or `FAIL` line per attempted target, and records per-target success or failure in `out/build-report.tsv`.
 Failed target logs are written to `out/fail-logs`.
-`make bash` and `make sh` remain explicit shortcuts for the shell binaries you started with.
+`make bash`, `make sh` and `make zsh` remain explicit shortcuts for the shell binaries you started with.
 
 ## GitHub Releases
 

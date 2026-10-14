@@ -33,6 +33,7 @@ Usage:
   scripts/build-apple-utils.sh build all
   scripts/build-apple-utils.sh build bash
   scripts/build-apple-utils.sh build sh
+  scripts/build-apple-utils.sh build zsh
   scripts/build-apple-utils.sh build java
   scripts/build-apple-utils.sh build xcrun
   scripts/build-apple-utils.sh build <repo>
@@ -42,6 +43,7 @@ Notes:
   - Repos are checked out at their latest published tag when one matches <repo>-*.
   - If a repo has no matching tags, the wrapper falls back to the repo's default branch HEAD.
   - "all" means: discover tool targets from Apple OSS repos and build the ones that install into system binary paths, plus locally-authored stubs (java, xcrun).
+  - "zsh" builds Apple's zsh repo with configure/make (it has no Xcode project) and links its modules statically.
   - "java" builds a locally-authored /usr/bin/java locator stub from local/java/java.c (macOS's java is a closed-source stub; this reproduces it). It forwards to a JDK found via $JAVA_HOME or /usr/libexec/java_home.
   - "xcrun" builds a locally-authored xcode-select launcher from local/xcrun/xcrun.c and stages it under every name in config/xcselect-tools.txt (xcrun, make, git, clang, ...). macOS ships those as x86_64/arm64e-only launchers; this one has a plain arm64 slice and calls the same libxcselect entry point.
   - Build results are recorded in out/build-report.tsv and out/binaries.tsv.
@@ -245,6 +247,7 @@ Primary entrypoints:
   make inventory -> discover all buildable Apple OSS system tool targets
   make bash     -> build bash only
   make sh       -> build sh only
+  make zsh      -> build zsh only
   make list     -> show this summary
 
 Target selection rules:
@@ -321,6 +324,16 @@ patch_file_public_sdk_compat() {
   if [[ -f "${xz_include}/lzma.h" ]]; then
     perl -pi -e 's{(HEADER_SEARCH_PATHS\s*=\s*)(\$\(SRCROOT\))}{$1$2 '"${xz_include}"'}' "${xcconfig}"
   fi
+}
+
+patch_zsh_public_sdk_compat() {
+  local zsh_src="$1"
+  local init_c="${zsh_src}/Src/init.c"
+
+  [[ -f "${init_c}" ]] || die "missing init.c at ${init_c}"
+
+  # csops() is exported by libSystem; only its header is SDK-internal.
+  perl -0pi -e 's|#include <System/sys/codesign\.h>\n|#if __has_include(<System/sys/codesign.h>)\n#include <System/sys/codesign.h>\n#else\n#define CS_OPS_STATUS 0\n#define CS_INSTALLER 0x00000008\nint csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);\n#endif\n|' "${init_c}"
 }
 
 patch_repo_compat() {
@@ -880,6 +893,69 @@ build_xcrun_shim() {
   return 0
 }
 
+# Build zsh from Apple's zsh repo. It is a GNUSource (autoconf) project with no
+# Xcode project, so target discovery never finds it. The system's
+# /usr/lib/zsh/<version> modules only ship x86_64 and arm64e slices, which an
+# arm64 zsh can't load, so every module that builds against the public SDK is
+# linked statically instead (zsh/pcre is left out: the SDK has no pcre headers).
+build_zsh() {
+  local repo_name="zsh"
+  local repo_dir
+  local worktree
+  local zsh_src
+  local dstroot
+  local log_dir
+  local log_file
+  local arch_flags="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
+
+  checkout_latest_revision "${repo_name}"
+  repo_dir="$(repo_dir_for_name "${repo_name}")"
+  worktree="$(copy_worktree "${repo_name}" "${repo_dir}")"
+  zsh_src="${worktree}/zsh"
+  patch_zsh_public_sdk_compat "${zsh_src}"
+
+  dstroot="${BUILD_DIR}/dst/$(sanitize_name "zsh-zsh")"
+  log_dir="${FAIL_LOG_DIR}/${repo_name}"
+  log_file="${log_dir}/zsh.log"
+  rm -rf "${dstroot}"
+  mkdir -p "${dstroot}/bin" "${log_dir}"
+  rm -f "${log_file}"
+
+  # Configure flags mirror Apple's zsh Makefile; paths match the system zsh so
+  # the shipped /usr/share/zsh functions and /etc/zshrc are picked up.
+  if (
+    cd "${zsh_src}" &&
+    CFLAGS="${arch_flags} -Os" \
+    CPPFLAGS="-DUSE_GETCWD" \
+    LDFLAGS="${arch_flags}" \
+    ./configure \
+      --prefix=/usr \
+      --bindir=/bin \
+      --sysconfdir=/private/etc \
+      --enable-etcdir=/private/etc \
+      --with-tcsetpgrp \
+      --enable-multibyte \
+      --enable-unicode9 \
+      --enable-max-function-depth=700 \
+      --disable-dynamic \
+      --disable-gdbm &&
+    perl -pi -e 'next if m{^name=zsh/(cap|db/gdbm|pcre|example) }; s/ link=no / link=static /' config.modules &&
+    perl -0pi -e 's|#define MACHTYPE "[^"]*"|#if defined(__arm64__)\n#define MACHTYPE "arm64"\n#elif defined(__x86_64__)\n#define MACHTYPE "x86_64"\n#endif|' config.h &&
+    make prep &&
+    make -j"$(sysctl -n hw.ncpu)"
+  ) >"${log_file}" 2>&1 && cp "${zsh_src}/Src/zsh" "${dstroot}/bin/zsh"; then
+    rm -f "${log_file}"
+    stage_installed_root "${repo_name}" "zsh" "zsh" "${dstroot}"
+    record_build_status "${repo_name}" "zsh" "zsh" "OK" "built and staged"
+    print -- "OK ${repo_name}:zsh"
+    return 0
+  fi
+
+  record_build_status "${repo_name}" "zsh" "zsh" "FAIL" "configure/make failed (${log_file#$ROOT_DIR/})"
+  print -u2 -- "FAIL ${repo_name}:zsh -> ${log_file#$ROOT_DIR/}"
+  return 1
+}
+
 build_repo_targets() {
   local repo_name="$1"
   shift || true
@@ -942,6 +1018,11 @@ build_all_targets() {
   while IFS= read -r repo_name; do
     [[ -n "${repo_name}" ]] || continue
 
+    if [[ "${repo_name}" == "zsh" ]]; then
+      build_zsh || failures=$((failures + 1))
+      continue
+    fi
+
     if ! build_repo_targets "${repo_name}"; then
       failures=$((failures + 1))
     fi
@@ -991,6 +1072,11 @@ build_targets() {
         ;;
       sh)
         if ! build_repo_targets "shell_cmds" "sh"; then
+          failures=$((failures + 1))
+        fi
+        ;;
+      zsh)
+        if ! build_zsh; then
           failures=$((failures + 1))
         fi
         ;;
