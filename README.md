@@ -15,7 +15,7 @@ Direct shortcuts:
 
 - `bash`: Apple-shipped, GPLv2, built from the latest `bash-*` tag
 - `sh`: Apple-shipped, but BSD-derived and built from the latest `shell_cmds-*` tag
-- `zsh`: Apple-shipped, MIT-style licence, built from the latest `zsh-*` tag with configure/make (no Xcode project) and modules linked statically, since the system's `/usr/lib/zsh` modules are `arm64e`-only on Apple silicon; `zsh/pcre` is not included
+- `zsh`: Apple-shipped, MIT-style licence, built from the latest `zsh-*` tag with configure/make (no Xcode project); only the binary is shipped and it loads the system's `/usr/lib/zsh` modules
 
 ## Usage
 

@@ -43,7 +43,7 @@ Notes:
   - Repos are checked out at their latest published tag when one matches <repo>-*.
   - If a repo has no matching tags, the wrapper falls back to the repo's default branch HEAD.
   - "all" means: discover tool targets from Apple OSS repos and build the ones that install into system binary paths, plus locally-authored stubs (java, xcrun).
-  - "zsh" builds Apple's zsh repo with configure/make (it has no Xcode project) and links its modules statically.
+  - "zsh" builds Apple's zsh repo with configure/make (it has no Xcode project); it loads modules from the system's /usr/lib/zsh.
   - "java" builds a locally-authored /usr/bin/java locator stub from local/java/java.c (macOS's java is a closed-source stub; this reproduces it). It forwards to a JDK found via $JAVA_HOME or /usr/libexec/java_home.
   - "xcrun" builds a locally-authored xcode-select launcher from local/xcrun/xcrun.c and stages it under every name in config/xcselect-tools.txt (xcrun, make, git, clang, ...). macOS ships those as x86_64/arm64e-only launchers; this one has a plain arm64 slice and calls the same libxcselect entry point.
   - Build results are recorded in out/build-report.tsv and out/binaries.tsv.
@@ -894,10 +894,8 @@ build_xcrun_shim() {
 }
 
 # Build zsh from Apple's zsh repo. It is a GNUSource (autoconf) project with no
-# Xcode project, so target discovery never finds it. The system's
-# /usr/lib/zsh/<version> modules only ship x86_64 and arm64e slices, which an
-# arm64 zsh can't load, so every module that builds against the public SDK is
-# linked statically instead (zsh/pcre is left out: the SDK has no pcre headers).
+# Xcode project, so target discovery never finds it. Only the zsh binary is
+# shipped; modules are loaded at run time from the system's /usr/lib/zsh/<version>.
 build_zsh() {
   local repo_name="zsh"
   local repo_dir
@@ -937,11 +935,8 @@ build_zsh() {
       --enable-multibyte \
       --enable-unicode9 \
       --enable-max-function-depth=700 \
-      --disable-dynamic \
       --disable-gdbm &&
-    perl -pi -e 'next if m{^name=zsh/(cap|db/gdbm|pcre|example) }; s/ link=no / link=static /' config.modules &&
     perl -0pi -e 's|#define MACHTYPE "[^"]*"|#if defined(__arm64__)\n#define MACHTYPE "arm64"\n#elif defined(__x86_64__)\n#define MACHTYPE "x86_64"\n#endif|' config.h &&
-    make prep &&
     make -j"$(sysctl -n hw.ncpu)"
   ) >"${log_file}" 2>&1 && cp "${zsh_src}/Src/zsh" "${dstroot}/bin/zsh"; then
     rm -f "${log_file}"
