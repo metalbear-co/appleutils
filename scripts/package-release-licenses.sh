@@ -67,6 +67,8 @@ find_repo_license_files() {
       -iname 'APPLE_LICENSE.*' -o \
       -iname 'LICENSE' -o \
       -iname 'LICENSE.*' -o \
+      -iname 'LICENCE' -o \
+      -iname 'LICENCE.*' -o \
       -iname 'NOTICE' -o \
       -iname 'NOTICE.*' -o \
       -iname 'COPYING' -o \
