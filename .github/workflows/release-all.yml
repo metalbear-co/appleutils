@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to create or update
-        required: true
+        description: Release tag to create or update (required on main; other branches only build and upload artifacts)
+        required: false
         type: string
       release_name:
         description: Optional GitHub release title
@@ -22,7 +22,15 @@ jobs:
       APPLICATION_IDENTITY: "Developer ID Application: METALBEAR TECH LTD (8W42TQ6PFA)"
       BUNDLE_PREFIX: com.metalbear
       ARCHIVE_PREFIX: apple-utils
+      # Only main publishes a release. Any other branch is a dry run.
+      TAG: ${{ inputs.tag || format('dryrun-{0}', github.run_id) }}
     steps:
+      - name: Check release tag
+        if: github.ref == 'refs/heads/main' && inputs.tag == ''
+        run: |
+          echo "::error::A tag is required when releasing from main"
+          exit 1
+
       - uses: actions/checkout@v4
 
       - name: Import signing certificate
@@ -44,7 +52,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs-${{ inputs.tag }}
+          name: build-logs-${{ env.TAG }}
           if-no-files-found: ignore
           path: |
             out/build-report.tsv
@@ -66,19 +74,33 @@ jobs:
         id: package
         run: |
           set -euo pipefail
-          archive_name="${ARCHIVE_PREFIX}-${{ inputs.tag }}.tar.gz"
+          archive_name="${ARCHIVE_PREFIX}-${TAG}.tar.gz"
           tar -C out/release-package -czf "${archive_name}" .
           release_name="${{ inputs.release_name }}"
           if [[ -z "${release_name}" ]]; then
-            release_name="apple utils ${{ inputs.tag }}"
+            release_name="apple utils ${TAG}"
           fi
           echo "archive_name=${archive_name}" >> "${GITHUB_OUTPUT}"
           echo "release_name=${release_name}" >> "${GITHUB_OUTPUT}"
 
+      - name: Upload dry-run release files
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ env.TAG }}
+          retention-days: 1
+          path: |
+            ${{ steps.package.outputs.archive_name }}
+            out/binaries.tsv
+            out/build-report.tsv
+            out/excluded-targets.tsv
+            out/signed-binaries.tsv
+
       - name: Publish GitHub release
+        if: github.ref == 'refs/heads/main'
         uses: metalbear-co/action-gh-release@ab50eebb6488051c6788d97fa95232267c6a4e23
         with:
-          tag_name: ${{ inputs.tag }}
+          tag_name: ${{ env.TAG }}
           name: ${{ steps.package.outputs.release_name }}
           files: |
             ${{ steps.package.outputs.archive_name }}
