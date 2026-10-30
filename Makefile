@@ -1,5 +1,5 @@
 .NOTPARALLEL:
-.PHONY: all bootstrap list inventory bash sh zsh java xcrun gpl clean
+.PHONY: all bootstrap list inventory bash zsh java xcrun gpl clean
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 SCRIPT := $(ROOT)/scripts/build-apple-utils.sh
@@ -18,9 +18,6 @@ inventory:
 
 bash:
 	"$(SCRIPT)" build bash
-
-sh:
-	"$(SCRIPT)" build sh
 
 zsh:
 	"$(SCRIPT)" build zsh
