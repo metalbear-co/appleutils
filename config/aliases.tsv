@@ -10,3 +10,16 @@ file_cmds	usr/bin/compress	usr/bin/uncompress
 file_cmds	bin/ln	bin/link
 file_cmds	bin/rm	bin/unlink
 file_cmds	usr/bin/stat	usr/bin/readlink
+text_cmds	usr/bin/bintrans	usr/bin/base64
+text_cmds	usr/bin/bintrans	usr/bin/b64decode
+text_cmds	usr/bin/bintrans	usr/bin/b64encode
+text_cmds	usr/bin/bintrans	usr/bin/uudecode
+text_cmds	usr/bin/bintrans	usr/bin/uuencode
+text_cmds	usr/bin/grep	usr/bin/egrep
+text_cmds	usr/bin/grep	usr/bin/fgrep
+text_cmds	usr/bin/grep	usr/bin/zgrep
+text_cmds	usr/bin/grep	usr/bin/zegrep
+text_cmds	usr/bin/grep	usr/bin/zfgrep
+text_cmds	usr/bin/grep	usr/bin/bzgrep
+text_cmds	usr/bin/grep	usr/bin/bzegrep
+text_cmds	usr/bin/grep	usr/bin/bzfgrep

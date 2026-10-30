@@ -33,7 +33,6 @@ Usage:
   scripts/build-apple-utils.sh inventory <repo>...
   scripts/build-apple-utils.sh build all
   scripts/build-apple-utils.sh build bash
-  scripts/build-apple-utils.sh build sh
   scripts/build-apple-utils.sh build zsh
   scripts/build-apple-utils.sh build java
   scripts/build-apple-utils.sh build xcrun
@@ -247,7 +246,6 @@ Primary entrypoints:
   make all      -> build all discovered Apple OSS system tool targets
   make inventory -> discover all buildable Apple OSS system tool targets
   make bash     -> build bash only
-  make sh       -> build sh only
   make zsh      -> build zsh only
   make list     -> show this summary
 
@@ -327,6 +325,84 @@ patch_file_public_sdk_compat() {
   fi
 }
 
+patch_file_cmds_public_sdk_compat() {
+  local file_cmds_root="$1"
+  local ls_c="${file_cmds_root}/ls/ls.c"
+
+  local print_c="${file_cmds_root}/ls/print.c"
+
+  [[ -f "${ls_c}" ]] || die "missing ls.c at ${ls_c}"
+  [[ -f "${print_c}" ]] || die "missing print.c at ${print_c}"
+
+  # ls includes the internal fsctl.h but only uses SF_DATALESS (public sys/stat.h) and sysctlbyname.
+  perl -0pi -e 's|#include <System/sys/fsctl\.h>\n|#if __has_include(<System/sys/fsctl.h>)\n#include <System/sys/fsctl.h>\n#endif\n|' "${ls_c}"
+
+  # ls -le names ACL entries with mbr_identifier_translate(), whose constants are in the internal
+  # membershipPriv.h. Without it, resolve the UUID with the public mbr_uuid_to_id() and
+  # getpwuid()/getgrgid(), which gives the same "user:NAME" / "group:NAME" output.
+  perl -0pi -e 's|#include <membershipPriv\.h>\n|#if __has_include(<membershipPriv.h>)\n#include <membershipPriv.h>\n#define HAVE_MEMBERSHIPPRIV_H 1\n#endif\n|' "${print_c}"
+  perl -0pi -e 's|(\tif \(mbr_identifier_translate\(ID_TYPE_UUID, \*uu, sizeof\(\*uu\), ID_TYPE_NAME, \(void \*\*\) &recname, &type\)\) \{\n\t\tgoto errout;\n\t\}\n\t\n\tsnprintf\(name, MAXNAMETAG, "%s:%s", \(type == MBR_REC_TYPE_USER \? "user" : "group"\), recname\);\n\tfree\(recname\);\n)|#ifdef HAVE_MEMBERSHIPPRIV_H\n$1#else\n\t{\n\t\tid_t id;\n\t\tstruct passwd *pw;\n\t\tstruct group *gr;\n\n\t\t(void)recname;\n\t\tif (mbr_uuid_to_id(*uu, &id, &type))\n\t\t\tgoto errout;\n\t\tif (type == ID_TYPE_UID && (pw = getpwuid(id)) != NULL)\n\t\t\tsnprintf(name, MAXNAMETAG, "user:%s", pw->pw_name);\n\t\telse if (type == ID_TYPE_GID && (gr = getgrgid(id)) != NULL)\n\t\t\tsnprintf(name, MAXNAMETAG, "group:%s", gr->gr_name);\n\t\telse\n\t\t\tgoto errout;\n\t}\n#endif\n|' "${print_c}"
+}
+
+patch_iokittools_public_sdk_compat() {
+  local iokittools_root="$1"
+  local ioreg_c="${iokittools_root}/ioreg.tproj/ioreg.c"
+  local include_dir="${BUILD_DIR}/compat-include/IOKit"
+
+  [[ -f "${ioreg_c}" ]] || die "missing ioreg.c at ${ioreg_c}"
+
+  # ioreg's IOServiceGetState(), IOServiceGetBusyStateAndTime() and _IOObject*() calls are
+  # exported by the public IOKit framework; only their header is SDK-internal. Apple's
+  # IOKitUser repo has it. Targets that need it add ${BUILD_DIR}/compat-include to
+  # HEADER_SEARCH_PATHS.
+  checkout_latest_revision "IOKitUser" >/dev/null
+  mkdir -p "${include_dir}"
+  cp "${SRC_DIR}/IOKitUser/IOKitLibPrivate.h" "${include_dir}/IOKitLibPrivate.h"
+
+  # From IOKitKeysPrivate.h, which only ships in xnu, ioreg only needs kIOClassNameOverrideNone.
+  perl -0pi -e 's|#include <IOKit/IOKitKeysPrivate\.h>([^\n]*)\n|#if __has_include(<IOKit/IOKitKeysPrivate.h>)\n#include <IOKit/IOKitKeysPrivate.h>$1\n#else\nenum {\n\tkIOClassNameOverrideNone = 0x00000001,\n};\n#endif\n|' "${ioreg_c}"
+}
+
+patch_ncurses_public_sdk_compat() {
+  local ncurses_root="$1"
+  local script
+
+  # The helper scripts build native code generators with the internal SDK.
+  for script in "${ncurses_root}"/xcodescripts/*.sh(N); do
+    perl -pi -e 's/macosx\.internal/macosx/g' "${script}"
+  done
+}
+
+patch_shell_cmds_public_sdk_compat() {
+  local shell_cmds_root="$1"
+  local nohup_c="${shell_cmds_root}/nohup/nohup.c"
+
+  [[ -f "${nohup_c}" ]] || die "missing nohup.c at ${nohup_c}"
+
+  # _vprocmgr_detach_from_console() is exported by libSystem; only its header is SDK-internal.
+  # The flags type is private too; nohup only passes 0, which a 64-bit argument carries safely.
+  perl -0pi -e 's|#include <vproc_priv\.h>\n|#if __has_include(<vproc_priv.h>)\n#include <vproc_priv.h>\n#else\nvproc_err_t _vprocmgr_detach_from_console(unsigned long long flags);\n#endif\n|' "${nohup_c}"
+}
+
+patch_text_cmds_public_sdk_compat() {
+  local formula
+  local header
+
+  # grep and wc need these Homebrew headers (see target_extra_args); fail early
+  # with a clear message instead of a "file not found" deep in the build.
+  for formula header in xz lzma.h libxo libxo/xo.h; do
+    [[ -f "$(brew --prefix "${formula}" 2>/dev/null)/include/${header}" ]] ||
+      die "missing ${header} for text_cmds; run: brew install ${formula}"
+  done
+}
+
+# Some tools (ls, tail) include <libutil.h>, which only the internal SDK has.
+# Apple's libutil repo has the header; the library itself is in the public SDK.
+# Targets that need it add ${SRC_DIR}/libutil to HEADER_SEARCH_PATHS.
+checkout_libutil_headers() {
+  checkout_latest_revision "libutil" >/dev/null
+}
+
 patch_zsh_public_sdk_compat() {
   local zsh_src="$1"
   local init_c="${zsh_src}/Src/init.c"
@@ -350,6 +426,23 @@ patch_repo_compat() {
     file)
       patch_file_public_sdk_compat "${worktree}"
       ;;
+    file_cmds)
+      patch_file_cmds_public_sdk_compat "${worktree}"
+      checkout_libutil_headers
+      ;;
+    IOKitTools)
+      patch_iokittools_public_sdk_compat "${worktree}"
+      ;;
+    ncurses)
+      patch_ncurses_public_sdk_compat "${worktree}"
+      ;;
+    shell_cmds)
+      patch_shell_cmds_public_sdk_compat "${worktree}"
+      ;;
+    text_cmds)
+      patch_text_cmds_public_sdk_compat
+      checkout_libutil_headers
+      ;;
   esac
 }
 
@@ -359,12 +452,39 @@ target_extra_args() {
   local -a args=()
 
   case "${repo_name}:${target_name}" in
-    shell_cmds:sh)
-      args+=(SH_INSTALL_PATH=/bin SH_PRODUCT_NAME=sh SH_MAN_PREFIX=/usr)
+    file_cmds:chmod)
+      # The project builds with -Werror and newer clang flags variables that are set but never read.
+      args+=('WARNING_CFLAGS=$(inherited) -Wno-error=unused-but-set-variable')
+      ;;
+    file_cmds:ls)
+      args+=('WARNING_CFLAGS=$(inherited) -Wno-error=unused-but-set-variable')
+      args+=("HEADER_SEARCH_PATHS=\$(inherited) ${SRC_DIR}/libutil")
+      ;;
+    network_cmds:ping)
+      # ping uses socket options and DSCP values that only xnu's private headers define.
+      args+=("OTHER_CFLAGS=\$(inherited) -include ${LOCAL_SRC_DIR}/compat/include/xnu_private_net.h")
+      ;;
+    IOKitTools:ioreg)
+      args+=("HEADER_SEARCH_PATHS=\$(inherited) ${BUILD_DIR}/compat-include")
+      # The project installs as root:wheel, which needs root; the bundle is unpacked by the user anyway.
+      args+=('INSTALL_OWNER=$(USER)' 'INSTALL_GROUP=$(GROUP)')
+      ;;
+    # Headers missing from the public SDK. lzma.h and libxo/xo.h come from Homebrew
+    # (checked in patch_text_cmds_public_sdk_compat), but the tools still link the
+    # system liblzma and libxo.
+    text_cmds:grep)
+      args+=("HEADER_SEARCH_PATHS=\$(inherited) $(brew --prefix xz)/include")
+      ;;
+    text_cmds:tail)
+      args+=("HEADER_SEARCH_PATHS=\$(inherited) ${SRC_DIR}/libutil")
+      ;;
+    text_cmds:wc)
+      args+=("HEADER_SEARCH_PATHS=\$(inherited) $(brew --prefix libxo)/include")
       ;;
   esac
 
-  print -r -- "${(j:\n:)args}"
+  # (p) makes \n a real newline; callers split the result back into args with (@f).
+  print -r -- "${(pj:\n:)args}"
 }
 
 sanitize_name() {
@@ -751,32 +871,6 @@ stage_installed_root() {
   done
 }
 
-# sh installs to usr/bin/sh but the canonical system path is /bin/sh; mirror it so
-# the staged root provides both.
-mirror_sh_into_bin() {
-  local repo_name="$1"
-  local project_label="$2"
-  local target_name="$3"
-  local repo_dir
-  local repo_ref
-  local link_name
-
-  [[ "${repo_name}" == "shell_cmds" && "${target_name}" == "sh" ]] || return 0
-  [[ -f "${OUT_ROOT_DIR}/usr/bin/sh" ]] || return 0
-  [[ -e "${OUT_ROOT_DIR}/bin/sh" ]] && return 0
-
-  repo_dir="$(repo_dir_for_name "${repo_name}")"
-  repo_ref="$(current_repo_ref "${repo_dir}")"
-
-  mkdir -p "${OUT_ROOT_DIR}/bin"
-  cp -p "${OUT_ROOT_DIR}/usr/bin/sh" "${OUT_ROOT_DIR}/bin/sh"
-
-  link_name="$(choose_output_link_name "bin/sh")"
-  rm -f "${OUT_BIN_DIR}/${link_name}"
-  ln -s "../root/bin/sh" "${OUT_BIN_DIR}/${link_name}"
-  print -- "${repo_name}\t${repo_ref}\t${project_label}\t${target_name}\tbin/sh\t${link_name}" >> "${BINARY_MANIFEST}"
-}
-
 # Some tools are another tool under a second name, e.g. readlink is stat and
 # pgrep is pkill: the program checks the name it runs as to pick its behaviour.
 # Apple's Xcode projects create these names in a separate hardlink step that
@@ -845,7 +939,6 @@ build_one_target() {
   if run_xcodebuild "${build_key}" -project "${project_file}" -target "${target_name}" "${extra_args[@]}" install >"${log_file}" 2>&1; then
     rm -f "${log_file}"
     stage_installed_root "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"
-    mirror_sh_into_bin "${repo_name}" "${project_label}" "${target_name}"
     stage_aliases "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"
     record_build_status "${repo_name}" "${project_label}" "${target_name}" "OK" "built and staged"
     print -- "OK ${repo_name}:${target_name}"
@@ -1103,11 +1196,6 @@ build_targets() {
         ;;
       bash)
         if ! build_repo_targets "bash" "bash"; then
-          failures=$((failures + 1))
-        fi
-        ;;
-      sh)
-        if ! build_repo_targets "shell_cmds" "sh"; then
           failures=$((failures + 1))
         fi
         ;;
