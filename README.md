@@ -60,11 +60,11 @@ The workflow:
 - signs each built Mach-O output with `Developer ID Application: METALBEAR TECH LTD (8W42TQ6PFA)`
 - signs without Hardened Runtime by default, so loader-based injection like `DYLD_INSERT_LIBRARIES` remains available
 - uses bundle IDs in the form `com.metalbear.UTILNAME`
-- publishes a GitHub release asset as `apple-utils-<tag>.tar.gz` containing only signed binaries under `/bin`, `/sbin`, `/usr/bin`, and `/usr/sbin`, plus the top-level `LICENSE`, `NOTICE.md`, `upstream-licenses/`, and `upstream-license-manifest.tsv`
+- publishes a GitHub release asset as `apple-utils-<tag>.tar.gz` containing only signed binaries under `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, and `/usr/libexec`, plus the top-level `LICENSE`, `NOTICE.md`, `upstream-licenses/`, and `upstream-license-manifest.tsv`
 
 Note:
 
-- `/usr/libexec` is another common system executable location on macOS, but it is intentionally excluded from the release tarball right now.
+- Tools that Apple installs as hardlinks of another tool (e.g. `readlink` of `stat`, `pgrep` of `pkill`) come from aggregate targets that discovery skips. They are listed in `config/aliases.tsv` and staged as copies of their source binary once it builds.
 
 Required repository secrets:
 

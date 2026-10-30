@@ -22,6 +22,7 @@ readonly MANUAL_EXCLUSIONS_FILE="${ROOT_DIR}/config/excluded-target-patterns.tsv
 readonly PINNED_TAGS_FILE="${ROOT_DIR}/config/pinned-tags.tsv"
 readonly LOCAL_SRC_DIR="${ROOT_DIR}/local"
 readonly XCSELECT_TOOLS_FILE="${ROOT_DIR}/config/xcselect-tools.txt"
+readonly ALIASES_FILE="${ROOT_DIR}/config/aliases.tsv"
 
 usage() {
   cat <<'EOF'
@@ -776,6 +777,45 @@ mirror_sh_into_bin() {
   print -- "${repo_name}\t${repo_ref}\t${project_label}\t${target_name}\tbin/sh\t${link_name}" >> "${BINARY_MANIFEST}"
 }
 
+# Some tools are another tool under a second name, e.g. readlink is stat and
+# pgrep is pkill: the program checks the name it runs as to pick its behaviour.
+# Apple's Xcode projects create these names in a separate hardlink step that
+# target discovery skips, so after this target is staged, copy its binaries to
+# the alias names listed in config/aliases.tsv. Each alias is recorded in
+# binaries.tsv so it gets signed and shipped like any other binary.
+stage_aliases() {
+  local repo_name="$1"
+  local project_label="$2"
+  local target_name="$3"
+  local installed_root="$4"
+  local repo_dir
+  local repo_ref
+  local alias_repo
+  local source_path
+  local alias_path
+  local link_name
+
+  [[ -f "${ALIASES_FILE}" ]] || return 0
+
+  repo_dir="$(repo_dir_for_name "${repo_name}")"
+  repo_ref="$(current_repo_ref "${repo_dir}")"
+
+  while IFS=$'\t' read -r alias_repo source_path alias_path; do
+    [[ -n "${alias_repo}" && "${alias_repo}" != \#* ]] || continue
+    [[ "${alias_repo}" == "${repo_name}" ]] || continue
+    [[ -f "${installed_root}/${source_path}" ]] || continue
+
+    mkdir -p "${OUT_ROOT_DIR}/${alias_path:h}"
+    rm -f "${OUT_ROOT_DIR}/${alias_path}"
+    cp -p "${OUT_ROOT_DIR}/${source_path}" "${OUT_ROOT_DIR}/${alias_path}"
+
+    link_name="$(choose_output_link_name "${alias_path}")"
+    rm -f "${OUT_BIN_DIR}/${link_name}"
+    ln -s "../root/${alias_path}" "${OUT_BIN_DIR}/${link_name}"
+    print -- "${repo_name}\t${repo_ref}\t${project_label}\t${target_name}\t${alias_path}\t${link_name}" >> "${BINARY_MANIFEST}"
+  done < "${ALIASES_FILE}"
+}
+
 build_one_target() {
   local repo_name="$1"
   local worktree="$2"
@@ -806,6 +846,7 @@ build_one_target() {
     rm -f "${log_file}"
     stage_installed_root "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"
     mirror_sh_into_bin "${repo_name}" "${project_label}" "${target_name}"
+    stage_aliases "${repo_name}" "${project_label}" "${target_name}" "${dstroot}"
     record_build_status "${repo_name}" "${project_label}" "${target_name}" "OK" "built and staged"
     print -- "OK ${repo_name}:${target_name}"
     return 0

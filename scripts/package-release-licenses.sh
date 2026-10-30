@@ -13,7 +13,7 @@ readonly PACKAGE_ROOT="${OUT_DIR}/release-package"
 readonly UPSTREAM_LICENSE_DIR="${PACKAGE_ROOT}/upstream-licenses"
 readonly UPSTREAM_LICENSE_MANIFEST="${PACKAGE_ROOT}/upstream-license-manifest.tsv"
 readonly LICENSE_SEARCH_MAX_DEPTH="${LICENSE_SEARCH_MAX_DEPTH:-4}"
-readonly ALLOWED_RELATIVE_ROOTS_REGEX='^(bin|sbin|usr/bin|usr/sbin)/'
+readonly ALLOWED_RELATIVE_ROOTS_REGEX='^(bin|sbin|usr/bin|usr/sbin|usr/libexec)/'
 
 usage() {
   cat <<'EOF'
@@ -22,10 +22,10 @@ Usage:
 
 Notes:
   - Creates out/release-package from the current out/root tree.
-  - Only includes signed Mach-O binaries under /bin, /sbin, /usr/bin, and /usr/sbin.
+  - Only includes signed Mach-O binaries under /bin, /sbin, /usr/bin, /usr/sbin, and /usr/libexec.
   - Keeps top-level LICENSE and NOTICE.md.
   - Bundles upstream license and notice files from the source repos that produced the shipped binaries.
-  - Excludes docs, tests, plists, libexec helpers, and all other non-binary files.
+  - Excludes docs, tests, plists, and all other non-binary files.
 EOF
 }
 
