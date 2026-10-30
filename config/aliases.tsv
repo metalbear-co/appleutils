@@ -1,0 +1,12 @@
+# Alias binaries that Apple installs as hardlinks of another tool through
+# PBXAggregateTarget targets (xcodescripts/hardlink.sh, variant_links.sh), which
+# target discovery skips. Each tool picks its mode from getprogname(), so after
+# the source binary is staged it is copied under every alias name.
+# Columns (tab-separated): repo, staged source path, staged alias path.
+adv_cmds	usr/bin/pkill	usr/bin/pgrep
+file_cmds	usr/bin/cksum	usr/bin/sum
+file_cmds	usr/sbin/chown	usr/bin/chgrp
+file_cmds	usr/bin/compress	usr/bin/uncompress
+file_cmds	bin/ln	bin/link
+file_cmds	bin/rm	bin/unlink
+file_cmds	usr/bin/stat	usr/bin/readlink
